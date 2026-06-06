@@ -13,6 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const SAMPLE = path.join(__dirname, '..', 'examples', 'sample-project')
 const SCOPED = path.join(__dirname, '..', 'examples', 'scoped')
 const INTENT = path.join(__dirname, '..', 'examples', 'intent')
+const TAINT = path.join(__dirname, '..', 'examples', 'taint')
 
 test('extract produces a real call graph', async () => {
   const { facts } = await extractProject(SAMPLE, { lift: 'offline' })
@@ -78,4 +79,12 @@ test('intent-effect-mismatch flags read-named mutators, not plain DB reads', asy
   const names = rows.map((r) => r.N).sort()
   // getThings reads (findMany) → no contradiction; getAndPurge writes (deleteMany) → flagged.
   assert.deepEqual(names, ['getAndPurge'])
+})
+
+test('taint analysis flags unsanitized source→sink, not the sanitized path', async () => {
+  const proj = await extractProject(TAINT, { lift: 'none' })
+  const rows = await runQuery(buildProgram(proj), "violation(N, 'taint-reaches-sink').")
+  // searchUsers: req.query → db.query unsanitized (vulnerable). searchSafe: db.escape'd (clean).
+  assert.equal(rows.length, 1, 'exactly one vulnerable sink')
+  assert.ok(String(rows[0].N).includes('sink_sql'), 'the SQL sink is the flagged one')
 })

@@ -50,7 +50,12 @@ export const TOOLS = [
   },
   {
     name: 'verify',
-    description: 'Run the governance rule base; return violations (crypto-in-loop, await-in-loop, external-call, hardcoded-sensitive, dead-code, intent-effect-mismatch).',
+    description: 'Run the governance rule base; return violations (crypto-in-loop, await-in-loop, external-call, hardcoded-sensitive, dead-code, intent-effect-mismatch, taint-reaches-sink).',
+    inputSchema: { type: 'object', properties: { ...P }, required: ['path'] },
+  },
+  {
+    name: 'taint',
+    description: 'Data-flow taint analysis: find untrusted input (req/argv/location/prompt) reaching a dangerous sink (SQL/command/XSS) WITHOUT sanitization — the CWE-89/CWE-79 injection family. Returns the vulnerable sink locations (file:line:kind).',
     inputSchema: { type: 'object', properties: { ...P }, required: ['path'] },
   },
   {
@@ -82,6 +87,10 @@ export async function runTool(name, a = {}) {
     case 'verify': {
       const rows = await ask(a.path, 'violation(Subject, Rule).')
       return j({ count: rows.length, violations: rows.slice(0, 500).map((r) => ({ subject: r.Subject, rule: r.Rule })) })
+    }
+    case 'taint': {
+      const rows = await ask(a.path, "violation(N, 'taint-reaches-sink').")
+      return j({ count: rows.length, sinks: rows.slice(0, 500).map((r) => r.N) })
     }
     case 'query': {
       const rows = await ask(a.path, String(a.goal))

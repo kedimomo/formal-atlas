@@ -1,6 +1,6 @@
 {
   "name": "formal-atlas",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Neurosymbolic code formalization — lift any codebase into logical facts and verify properties with Prolog/Datalog. Standalone, language-agnostic, points at any project.",
   "type": "module",
   "files": [

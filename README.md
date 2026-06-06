@@ -96,8 +96,8 @@ $ node src/cli.js fdrs examples/sample-project          # 喂给"现有"FDRS 校
 
 ## 现状与边界（诚实）
 
-- ✅ 已跑通：**JS 深抽取 + points-to 指向分析**（死代码误报根治 86→1）、**作用域感知调用解析**（linker 用 import 绑定把跨文件同名函数解析为文件限定节点，死代码误报趋近零）、**多语言 tree-sitter**（Python/Go/Java/Rust/TS，同一 schema）、AI 语义提升（离线+在线）、`reaches/dead_code/cyclic/impact/violation`、**SMT/z3**（契约蕴含证明+反例、RBAC 职责分离）、**FDRS 回流桥 + 深事实信号源**（`fdrs-synthesize --deep`）、CLI、13 个测试、真实代码验证。
-- ⚠️ 已知限制：**反射/高阶/动态分派**指向未解析（跨文件同名已由 linker 根治）；作用域解析的 import 绑定与 points-to 目前**仅 JS**（非 JS 走"本地+全局唯一"较松解析）；正则兜底层仅粗粒度；LLM 事实是**启发式**、需复核；SMT 契约需用可形式化 DSL 表达。根治方案（Doop 级 points-to、Soufflé、全 Dafny 证明、autoformalization）见路线图。
+- ✅ 已跑通：**JS 深抽取 + points-to 指向分析**（死代码误报根治 86→1）、**作用域感知调用解析**（linker 用 import 绑定把跨文件同名函数解析为文件限定节点，死代码误报趋近零）、**多语言 tree-sitter**（Python/Go/Java/Rust/TS，同一 schema）、AI 语义提升（离线+在线）、`reaches/dead_code/cyclic/impact/violation`、**SMT/z3**（契约蕴含证明+反例、RBAC 职责分离）、**数据流污点分析**（`taint-reaches-sink`，CWE-89/79，从 logos 合并强化）、**FDRS 回流桥 + 深事实信号源**（`fdrs-synthesize --deep`）、**MCP server + Claude Code 插件**、CLI、14 个测试、真实代码验证。
+- ⚠️ 已知限制：**反射/高阶/动态分派**指向未解析（跨文件同名已由 linker 根治）；作用域解析的 import 绑定与 points-to 目前**仅 JS**（非 JS 走"本地+全局唯一"较松解析）；正则兜底层仅粗粒度；**污点分析为行级/文件内启发式**（跨过程精确流未做）；LLM 事实是**启发式**、需复核；SMT 契约需用可形式化 DSL 表达。根治方案（Doop 级 points-to、Soufflé、全 Dafny 证明、autoformalization）见路线图。
 - 🧭 原则：**按性质难度分流引擎；可判定优先；LLM 只产事实、永远过求解器才成结论**。
 
 ## 安装

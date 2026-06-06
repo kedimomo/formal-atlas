@@ -52,6 +52,7 @@
 | `side_effect(Routine, network\|database\|crypto\|...)` | **副作用** | **lift** |
 | `pure(Routine)` | **纯函数** | **lift** |
 | `contract(Routine, pre\|post, '...')` | **前/后置契约**（→ SMT/Dafny） | **lift (LLM)** |
+| `source(Id)` · `sink(Id, Kind)` · `sanitizer(Id)` · `dataflow(A, B)` | **污点数据流**：不可信输入 / 危险汇(sql\|command\|xss) / 净化器 / 值流（`Id='file:line:tag'`） | **extract (taint)** |
 
 > 扩展本体 = 加抽取器输出新谓词 + 在 `*.pl` 里写消费它的规则。这是系统的主要延展点。
 
@@ -62,6 +63,7 @@
 - **`structural.pl`** —— 基础 EDB 关系的 `:- dynamic` 声明 + 本地 `member/2`（避免空关系触发 existence_error）。
 - **`resolved.pl`** —— 语言无关的结构规则，跑在 **linker 解析后的文件限定图**（`decl/node/rcall`）上：`reaches/2`（cycle-safe 传递闭包）、`dead_code/2`（含 `unresolved_call` 安全网）、`cyclic/1`、`impact/2`、`caller_of/2`。对外仍是**裸名接口**（经 `node/2` 投影回名字），所以跨文件**同名函数不再合并**。
 - **`governance.pl`** —— 示例**性质规则**，统一为 `violation(Subject, RuleId)`。把 FDRS 六支柱重写在**深事实库**上，因而更精确（如 `intent-effect-mismatch` 只在"读"名 + 写/网络副作用时触发，DB 读不算矛盾）。
+- **`taint.pl`** —— **数据流污点分析**(CWE-89/79)：不可信输入未经净化流到危险汇 → `violation(Sink, 'taint-reaches-sink')`。事实由 `extract/taint.js` 产出（从 logos 草稿**合并并强化**：函数边界重置 + 字符串字面量屏蔽，比原草稿少误报）。
 
 新增规则只需丢一个 `.pl` 进去——**规则即插件**。
 
@@ -76,6 +78,7 @@ src/
     js-ast.js            acorn 真 AST → 调用图 + points-to + calls3/import_binding (JS)
     treesitter.js        web-tree-sitter → Python/Go/Java/Rust/TS，同一 schema
     generic.js           正则启发式 → 其余语言的粗粒度事实
+    taint.js             数据流污点抽取 (source/sink/sanitizer/dataflow，JS 家族)
   link/
     linker.js            作用域感知调用解析：calls3+import_binding → decl/node/rcall
   lift/
@@ -87,13 +90,13 @@ src/
     smt-bridge.js        z3-solver：契约蕴含校验 + RBAC SoD + Dafny 骨架
   integrations/
     fdrs-bridge.js       深事实 → FDRS 概念事实 → 现有 tools/lint/prolog-check.js
-  rules/*.pl             structural(声明) + resolved(结构规则) + governance(治理)，自动加载
+  rules/*.pl             structural(声明) + resolved(结构) + governance(治理) + taint(污点)，自动加载
   report/reporter.js     违规分级报告 + 查询结果表格
 examples/
-  sample-project/  JS 演示    polyglot/  Python+Go    scoped/  同名解析    intent/  意图×副作用
+  sample-project/ JS  polyglot/ Py+Go  scoped/ 同名  intent/ 意图×副作用  taint/ 注入
   policy/rbac-sod.json  RBAC 职责分离          contracts/*.json  契约样例
 test/
-  smoke.test.js          JS 核心端到端（8 用例：含同名解析/意图副作用）
+  smoke.test.js          JS 核心端到端（9 用例：含同名解析/意图副作用/污点）
   engines.test.js        tree-sitter + z3 + FDRS 桥（5 用例）
 ```
 

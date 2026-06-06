@@ -49,6 +49,6 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "_note": "When run inside the parent repo, acorn + tau-prolog resolve from the repo node_modules (zero install). When copied elsewhere, run `npm install`."
 }

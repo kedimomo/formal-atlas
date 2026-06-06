@@ -3,6 +3,6 @@
   "description": "Definitive code analysis as tools — reachability, dead code, impact (blast radius), governance, and Z3 contract checks over any codebase. Returns solver verdicts instead of making the agent read files (token-cheap, scope-aware).",
   "version": "0.1.0",
   "author": { "name": "formal-atlas" },
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "keywords": ["static-analysis", "datalog", "prolog", "mcp", "code-analysis", "formal-methods"]
 }

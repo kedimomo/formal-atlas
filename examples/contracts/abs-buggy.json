@@ -1,0 +1,7 @@
+{
+  "_doc": "A BUGGY contract: claims that x>=0 guarantees the 'absolute value' result r==x is non-negative AND equals |x| — but the stated post 'r >= 0 && r == x' is only safe when x>=0. Here pre allows x to be ANY int, so Z3 finds a counterexample (negative x).",
+  "name": "absValue",
+  "vars": { "x": "int", "r": "int" },
+  "pre": ["r == x"],
+  "post": ["r >= 0"]
+}

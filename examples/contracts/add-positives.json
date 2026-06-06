@@ -1,0 +1,7 @@
+{
+  "_doc": "A contract that HOLDS: if x>0 and y>0 then x+y>0. Z3 proves the postcondition is entailed.",
+  "name": "addPositives",
+  "vars": { "x": "int", "y": "int" },
+  "pre": ["x > 0", "y > 0"],
+  "post": ["x + y > 0"]
+}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "formal-atlas": {
+      "command": "npx",
+      "args": ["-y", "-p", "formal-atlas", "formal-atlas-mcp"]
+    }
+  }
+}

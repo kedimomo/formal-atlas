@@ -1,0 +1,15 @@
+{
+  "_doc": "RBAC separation-of-duty policy. 'create' and 'approve' must never be held by the same principal. alice is an author but is REQUIRED to be able to approve — forcing her to also take a role that grants create. bob is admin (holds both). Z3 should find: no safe assignment, and a violation witness.",
+  "permissions": ["create", "approve", "read"],
+  "conflicts": [["create", "approve"]],
+  "roles": {
+    "author": ["create", "read"],
+    "reviewer": ["approve", "read"],
+    "admin": ["create", "approve", "read"]
+  },
+  "principals": {
+    "alice": { "assigned": ["author"], "candidates": ["reviewer"] },
+    "bob": { "assigned": ["admin"] }
+  },
+  "require": [{ "principal": "alice", "permission": "approve" }]
+}

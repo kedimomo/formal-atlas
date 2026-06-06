@@ -1,0 +1,54 @@
+{
+  "name": "formal-atlas",
+  "version": "0.1.0",
+  "description": "Neurosymbolic code formalization — lift any codebase into logical facts and verify properties with Prolog/Datalog. Standalone, language-agnostic, points at any project.",
+  "type": "module",
+  "files": [
+    "src",
+    "mcp",
+    "README.md"
+  ],
+  "bin": {
+    "formal-atlas": "src/cli.js",
+    "formal-atlas-mcp": "mcp/server.js"
+  },
+  "scripts": {
+    "extract": "node src/cli.js extract",
+    "verify": "node src/cli.js verify",
+    "query": "node src/cli.js query",
+    "lift": "node src/cli.js lift",
+    "smt": "node src/cli.js smt",
+    "fdrs": "node src/cli.js fdrs",
+    "mcp": "node mcp/server.js",
+    "demo": "node src/cli.js verify examples/sample-project",
+    "demo:polyglot": "node src/cli.js verify examples/polyglot",
+    "demo:smt": "node src/cli.js smt policy examples/policy/rbac-sod.json",
+    "demo:fdrs": "node src/cli.js fdrs examples/sample-project",
+    "test": "node test/smoke.test.js && node test/engines.test.js && node mcp/test-mcp.js",
+    "test:engines": "node test/engines.test.js",
+    "test:mcp": "node mcp/test-mcp.js",
+    "bench": "node mcp/bench.js",
+    "prepublishOnly": "npm test"
+  },
+  "keywords": [
+    "formal-methods",
+    "prolog",
+    "datalog",
+    "static-analysis",
+    "neurosymbolic",
+    "autoformalization",
+    "code-verification"
+  ],
+  "dependencies": {
+    "acorn": "^8.11.0",
+    "tau-prolog": "^0.3.4",
+    "tree-sitter-wasms": "0.1.13",
+    "web-tree-sitter": "0.22.6",
+    "z3-solver": "^4.16.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT",
+  "_note": "When run inside the parent repo, acorn + tau-prolog resolve from the repo node_modules (zero install). When copied elsewhere, run `npm install`."
+}

@@ -1,0 +1,14 @@
+{
+  "name": "formal-atlas",
+  "owner": { "name": "formal-atlas" },
+  "description": "Neurosymbolic code-analysis tools (reachability, dead code, impact, governance, Z3 contracts) exposed as Claude Code plugins / MCP tools.",
+  "plugins": [
+    {
+      "name": "formal-atlas",
+      "source": "./plugin",
+      "description": "Definitive code analysis as MCP tools — saves tokens by returning solver verdicts instead of reading files.",
+      "category": "code-analysis",
+      "keywords": ["static-analysis", "datalog", "formal-methods"]
+    }
+  ]
+}

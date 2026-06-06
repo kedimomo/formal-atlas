@@ -20,12 +20,14 @@ Usage:
   formal-atlas verify  <path> [--lift=offline|online|none]
   formal-atlas query   <path> "<goal>." [--lift=...]
   formal-atlas lift    <path>            (extract + online AI lift)
+  formal-atlas watch   <path>            (monitor changes, auto-verify)
 
 Examples:
   formal-atlas verify examples/sample-project
   formal-atlas query  examples/sample-project "reaches(handleRequest, dbQuery)."
   formal-atlas query  examples/sample-project "dead_code(File, Name)."
   formal-atlas query  examples/sample-project "impact(validateUser, Caller)."
+  formal-atlas watch  <path>            (monitor changes, auto-verify)
 `
 
 function parseFlags(args) {
@@ -102,6 +104,12 @@ async function main() {
     const rows = await runQuery(buildProgram(proj), g)
     console.error(`# query over ${proj.facts.length} facts: ${g}`)
     console.log(reportQuery(rows, g))
+    return
+  }
+
+  if (cmd === 'watch') {
+    const { watch: startWatch } = await import('./watch.js')
+    await startWatch(target)
     return
   }
 

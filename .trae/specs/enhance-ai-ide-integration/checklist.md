@@ -1,0 +1,14 @@
+- [x] `.mcp.json` 存在于项目根目录，配置正确，Claude Code 可自动发现
+- [x] 增量缓存：`src/cache.js` 存在，包含 getCached/setCache/invalidate/stats 函数
+- [x] `map` 工具 overview 模式返回文件+导出概览
+- [x] `map` 工具 file 模式返回单文件导出/导入/符号
+- [x] `map` 工具 symbol 模式返回定义位置+调用者+被调用者
+- [x] `search` 工具按名称搜索返回匹配符号
+- [x] `search` 工具按调用关系搜索返回正确结果
+- [x] `review` 工具 all 模式执行完整审查流程
+- [x] `review` 工具 quick 模式只执行概览+校验
+- [x] MCP 工具描述包含具体触发场景，AI IDE 可准确匹配
+- [x] `watch` 命令已注册在 cli.js，使用 fs.watch + 防抖
+- [x] `watch` 命令文件变更后自动增量抽取+重新校验
+- [x] `package.json` 包含 watch 脚本和 .mcp.json
+- [x] 现有 7 个工具功能不受影响（回归测试通过：smoke 9/9, engines 5/5, MCP 10 tools OK）

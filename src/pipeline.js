@@ -10,6 +10,7 @@ import { extractFile } from './extract/index.js'
 import { dedupe, factsToProlog } from './lift/fact-model.js'
 import { liftOffline, liftOnline } from './lift/ai-lifter.js'
 import { link } from './link/linker.js'
+import { getCached, setCache } from './cache.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const RULES_DIR = path.join(__dirname, 'rules')
@@ -49,7 +50,17 @@ export async function extractProject(root, { lift = 'offline', maxFiles = 5000 }
   for (const { abs, fileId, ext } of files) {
     let code
     try { code = fs.readFileSync(abs, 'utf8') } catch { continue }
-    const { facts: ff, method } = await extractFile(fileId, code, ext)
+    let ff, method
+    const cached = getCached(abs, code)
+    if (cached) {
+      ff = cached
+      method = 'cache'
+    } else {
+      const result = await extractFile(fileId, code, ext)
+      ff = result.facts
+      method = result.method
+      setCache(abs, code, ff)
+    }
     methods[method] = (methods[method] || 0) + 1
     facts.push(...ff)
     if (lift === 'online') {

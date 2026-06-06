@@ -6,6 +6,7 @@
   "files": [
     "src",
     "mcp",
+    ".mcp.json",
     "README.md"
   ],
   "bin": {
@@ -19,6 +20,7 @@
     "lift": "node src/cli.js lift",
     "smt": "node src/cli.js smt",
     "fdrs": "node src/cli.js fdrs",
+    "watch": "node src/cli.js watch",
     "mcp": "node mcp/server.js",
     "demo": "node src/cli.js verify examples/sample-project",
     "demo:polyglot": "node src/cli.js verify examples/polyglot",

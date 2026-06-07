@@ -38,12 +38,13 @@ node src/cli.js verify  ../src/server/routes              # ★3+★6：直接 s
   - **刀6（传递 conduit A→B→C 跨文件不动点）**：`summarizeReturns` 改返回 `{conduits, returnCalls}`,遇 `return callee(..)`（`calleeOf` 只认裸 callee,dotted 天然排除）收集 `[fn,callee]` → 发 `ret_returns_call('File::Fn',Callee)`；`taint-link.js` 在 return-join 前跑**跨文件不动点**——复用同一 `resolve()` 把 callee 解析到 QId,命中 conduit 集即并入 QFn,迭代到不变（单调有界必终止;自递归/环无基础 conduit 则不传播）。新并入的传递 conduit 也发 `taint_returns_q` 便于 query/explain。夹具 `examples/taint-transitive/`（source.getName→delegate.fetchName→consumer.show）、1 测试。实测路由 0 新误报。
   - **刀7（传递 conduit 同文件不动点）**：补刀6 的同文件漏报——`summarizeReturns` 收尾再跑一个**同文件不动点**:对每条 `[fn,callee]`,callee 是同文件 conduit 即把 fn 并入 `conduits`。于是同文件 `fetchName` 升格 direct conduit（slice-1 `returnsTaint.has` 真）→ 同文件 consumer 直接 source。与刀6 互补（同文件 callee 在此解、跨文件留给 linkTaint）。slice-1 锚点不受影响（taint-interproc 无 `return 裸conduit(..)`,returnCalls 空）。夹具 `examples/taint-localtransitive/`（单文件）、1 测试。
 - **#6 续刀（最连贯的下一步）**：**return-of-tainted-arg**（`function id(x){return x}` 透传形参的返回——区别于"内部制造污点"的 conduit,是 param→return 摘要,可与 param-sink 摘要合流）→ 最终 exploded-supergraph 上把 conduit/param-sink/return 三类摘要统一成 realizable-path CFL-可达。
-- **#5 Soufflé / 增量 Datalog**（规模）：大库 tau-prolog 慢 → Datalog→并行 C++；watch 模式增量维护。
-- **#7 Doop 级过程间指向**（精度）：解析动态分派/反射，死代码/污点误报压到工业级。
-- **#8 全 ITP 放电**（地平线）：接 Dafny/Verus/Lean CLI 真正放电证明义务（最严最贵）。
+- **大前沿推荐序 = 5 → 7 → 8**（用户问过 7→8→5;判定:**#7 需 #5 在前**——Doop 级 points-to 本质是"Datalog 跑在 Soufflé 上",上下文敏感事实爆炸 tau-prolog 扛不住,所以规模引擎 #5 是 #7 的底座;#8 最贵且依赖外部 prover,补的是已诚实的 `unchecked` 档,放最后)：
+  - **#5 Soufflé / 增量 Datalog**（规模，先行）：大库 tau-prolog 慢(实测 145 文件 17s)→ Datalog→并行 C++；watch 模式增量维护。是企业级立项目的的落地前提,也是 #7 的引擎。
+  - **#7 Doop 级过程间指向**（精度，居中）：建在 Soufflé 上,解析动态分派/反射,把死代码/污点误报压到工业级。
+  - **#8 全 ITP 放电**（严谨，地平线/收尾）：接 Dafny/Verus/Lean CLI 真正放电证明义务（最严最贵、需外部工具链）。
 
 ## 待办尾巴（可选，低优先）
 - 真机 `repair --online` / `roundTrip` 在线（需 `ANTHROPIC_API_KEY` 或 IDE MCP 采样）跑一遍。
-- 把 ★3 `sink_ct` 分诊接到 `fdrs-deep-signal`，让回流 FDRS 的信号也去掉 92 假 XSS 噪音。
+- ✅ **已做（2026-06-07）**：把 ★3 `sink_ct` 分诊接到 `fdrs-deep-signal`。改在**父仓** `tools/lint/fdrs-deep-signal.js`：`DEEP_PILLAR` 加 `taint-reaches-sink → boundary(P6)`(注入=跨数据信任边界);因 ★3 抑制已在 `violation` 规则内,只有真阳回流(实测 routes 文件 1 真阳,非 7);并查询 `suppressed_xss/1` 把抑制数作 `suppressedXss` 字段 + 理由行**显式回流**(让 FDRS 看见"压掉了几个假 XSS"，不是漏掉)。端到端 `fdrs-synthesize --deep` 贯通、`fdrs-synthesis-proposal` 优雅消费、默认目标 auth/policy 行为不变。**注意:此改动在父仓(分支 `hid-fido-enum`)、尚未提交**——formal-atlas 自身未动。
 - 本分支尚 **未 push、未 merge 到 main**（沿用 ★2 checkpoint 纪律）。
 - 旁注：`formal-atlas/.trae/` 下有若干**与 ★ 系列无关的 micro-forge 规划稿**（未跟踪），历次提交都刻意排除，勿混入。

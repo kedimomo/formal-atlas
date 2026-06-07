@@ -276,7 +276,7 @@ test('★6 slice-7 within-file transitive conduit: `return localConduit(..)` is 
   assert.ok(String(vios[0].N).includes('handlers.js:18:sink_xss'))
 })
 
-test('★5 semi-naive Datalog engine: bit-identical parity with tau-prolog (reaches/cyclic/dead_code/tainted)', async () => {
+test('★5 semi-naive Datalog engine: bit-identical parity with tau-prolog (reaches/cyclic/dead_code/tainted/impact)', async () => {
   const canon = (rows, fn) => new Set(rows.map(fn))
   const eqSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x))
   // sample-project exercises reaches+dead_code; taint-xfile exercises tainted+reaches.
@@ -289,6 +289,7 @@ test('★5 semi-naive Datalog engine: bit-identical parity with tau-prolog (reac
       ['cyclic', 'cyclic(N).', (r) => String(r.N), eng.cyclic],
       ['dead_code', 'dead_code(F,N).', (r) => `${r.F}\t${r.N}`, eng.deadCode],
       ['tainted', 'tainted(N).', (r) => String(r.N), eng.tainted],
+      ['impact', 'impact(T,C).', (r) => `${r.T}\t${r.C}`, eng.impact],
     ]
     for (const [name, goal, fn, engSet] of cases) {
       const pl = canon(await runQuery(program, goal), fn)

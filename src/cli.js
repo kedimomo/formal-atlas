@@ -11,6 +11,7 @@ import fs from 'node:fs'
 import { extractProject, buildProgram } from './pipeline.js'
 import { factsToProlog, shape } from './lift/fact-model.js'
 import { runQuery, hasProlog } from './verify/prolog-engine.js'
+import { queryEngine } from './verify/datalog.js'
 import { reportViolations, reportQuery } from './report/reporter.js'
 
 const HELP = `formal-atlas — lift code into logic, verify with Prolog/Datalog.
@@ -153,10 +154,14 @@ async function main() {
   if (cmd === 'query') {
     const goal = positional[1]
     if (!goal) { console.error('error: missing "<goal>."'); process.exit(2) }
-    const proj = await extractProject(target, { lift })
+    const proj = await extractProject(target, { lift, engine })
     const g = goal.trim().endsWith('.') ? goal.trim() : goal.trim() + '.'
-    const rows = await runQuery(buildProgram(proj), g)
-    console.error(`# query over ${proj.facts.length} facts: ${g}`)
+    // ★5: route a pure closure query straight to the semi-naive engine (110–1238×);
+    // unsupported/bound goals return null → fall back to tau-prolog.
+    let rows = engine === 'datalog' ? queryEngine(proj.facts, g) : null
+    const via = rows ? ' [semi-naive engine]' : ''
+    if (!rows) rows = await runQuery(buildProgram(proj), g)
+    console.error(`# query over ${proj.facts.length} facts: ${g}${via}`)
     console.log(reportQuery(rows, g))
     return
   }

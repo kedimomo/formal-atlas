@@ -89,4 +89,4 @@
    | `tainted` | 3 631 ms | （同上 33 ms） | ✅ 1=1 | 110× |
 
    引擎一次 `evaluate` 即 33 ms 算完全部闭包,且与 tau-prolog **逐位一致**。论点证实:零安装半朴素**又对又快**,无需 Soufflé。
-5. ☐ **闭包查询路由（下一增量,1238× 的落地处）**：把 `query`/MCP 的纯闭包谓词（`cyclic`/`reaches`/`dead_code`/`tainted`/`impact`）在 `--engine=datalog` 时直接由引擎应答（绕开 tau-prolog），把 `cyclic` 52s→33ms 这类大查询的加速真正交付给用户。需在 query 层按谓词名/元数路由 + 把引擎集合转成 binding-row 格式。
+5. ✅ **闭包查询路由（已落地 2026-06-07，1238× 的落地处）**：`src/verify/datalog.js` `queryEngine(facts, goal)` 把 `query`/`--engine=datalog` 的纯闭包谓词（`cyclic`/`reaches`/`dead_code`/`tainted`/`impact`，仅全变量 goal）直接由引擎应答、绕开 tau-prolog；不支持/带绑定的 goal 返回 null 回退 tau-prolog。`evaluate` 增 `impact`(node×routine-decl×r_reaches)。**实测**:`query --engine=datalog "cyclic(N)." ../src/store/services` **52s → 1.8s 端到端**(引擎计算本身 ~33ms,余为抽取),15 解、标注 `[semi-naive engine]`;cyclic/reaches/impact/dead_code 在 sample-project 上默认 vs datalog **逐位一致**。parity 测试(★5)覆盖 5 个谓词。

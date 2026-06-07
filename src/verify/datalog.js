@@ -122,7 +122,21 @@ export function evaluate(facts) {
     }
   }
 
-  return { reaches, cyclic, deadCode, tainted, rReaches }
+  // impact(Target,Caller) :- node(QT,Target), decl(QC,_,Caller,routine), QC\=QT, r_reaches(QC,QT).
+  const routineName = new Map()
+  for (const d of decls) if (d.kind === 'routine') routineName.set(d.q, d.name)
+  const impact = new Set()
+  for (const [qc, set] of rReaches) {
+    const caller = routineName.get(qc)
+    if (caller === undefined) continue
+    for (const qt of set) {
+      if (qt === qc) continue
+      const target = nodeName.get(qt)
+      if (target !== undefined) impact.add(`${target}\t${caller}`)
+    }
+  }
+
+  return { reaches, cyclic, deadCode, tainted, impact, rReaches }
 }
 
 /**
@@ -137,4 +151,30 @@ export function materialize(facts) {
   for (const fn of e.deadCode) { const [f, n] = fn.split('\t'); out.push(fact('dead_code', f, n)) }
   for (const n of e.tainted) out.push(fact('tainted', n))
   return out
+}
+
+// Closure predicates the engine can answer directly (pred/arity → tuple list).
+const CLOSURE = {
+  'cyclic/1': (e) => [...e.cyclic].map((n) => [n]),
+  'tainted/1': (e) => [...e.tainted].map((n) => [n]),
+  'reaches/2': (e) => [...e.reaches].map((s) => s.split('\t')),
+  'dead_code/2': (e) => [...e.deadCode].map((s) => s.split('\t')),
+  'impact/2': (e) => [...e.impact].map((s) => s.split('\t')),
+}
+
+/**
+ * ★5 fast-path: answer a pure closure query (cyclic/reaches/dead_code/tainted/
+ * impact) straight from the semi-naive engine — where the 110–1238× lives. Only
+ * an ALL-VARIABLE goal of a supported predicate is routed (e.g. `cyclic(N).`,
+ * `reaches(A,B).`); a bound-argument or unsupported goal returns null so the
+ * caller falls back to tau-prolog. Returns runQuery-shaped binding rows.
+ */
+export function queryEngine(facts, goal) {
+  const m = String(goal).match(/^\s*([a-z]\w*)\(([^)]*)\)\s*\.?\s*$/)
+  if (!m) return null
+  const vars = m[2].split(',').map((s) => s.trim())
+  if (!vars.every((v) => /^[A-Z_]\w*$/.test(v))) return null // only unbound-variable goals
+  const gen = CLOSURE[`${m[1]}/${vars.length}`]
+  if (!gen) return null
+  return gen(evaluate(facts)).map((tuple) => Object.fromEntries(vars.map((v, i) => [v, tuple[i]])))
 }

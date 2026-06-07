@@ -63,6 +63,15 @@ function bin(op, l, r, Z3) {
   }
 }
 
+/** Free variables of an expression (identifiers minus the bool literals). */
+export function varsOf(src) {
+  const set = new Set()
+  for (const t of tokenize(src)) {
+    if (/^[A-Za-z_]\w*$/.test(t) && t !== 'true' && t !== 'false') set.add(t)
+  }
+  return [...set]
+}
+
 export function compile(ast, Z3, vars) {
   switch (ast.t) {
     case 'num': return Z3.Int.val(ast.v)

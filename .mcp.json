@@ -2,7 +2,14 @@
   "mcpServers": {
     "formal-atlas": {
       "command": "npx",
-      "args": ["-y", "-p", "formal-atlas", "formal-atlas-mcp"]
+      "args": ["-y", "-p", "formal-atlas@latest", "formal-atlas-mcp"],
+      "env": {
+        "ANTHROPIC_API_KEY": "",
+        "OPENAI_API_KEY": "",
+        "OPENAI_BASE_URL": "",
+        "OPENAI_MODEL": "",
+        "FORMAL_ATLAS_MODEL": ""
+      }
     }
   }
 }

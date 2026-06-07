@@ -108,3 +108,5 @@
 它的每一步都有坚实的数学背书：Curry–Howard（代码即数学对象）、抽象解释（sound 近似的格论与不动点）、Datalog 语义（最小不动点 = 模型）、Rice 定理（边界与分层）。**这不是把数学"套"在代码上，而是把代码还原成它本来就是的数学。**
 
 参考文献见 [`references.md`](./references.md)。与"Atlas"及其它系统的关系见 [`03-atlas-comparison.md`](./03-atlas-comparison.md)。
+
+> **想再往里挖一层?** 见 [`05-math-deepening.md`](./05-math-deepening.md):把 Rice 精化成**算术分层**、Datalog=**PTIME**(描述复杂度/Immerman–Vardi)、**λ-立方体**(工具地图)、**精化类型**(缺失的一档)、抽象解释**完备性**、神经符号**忠实度**、**HoTT** 地平线。

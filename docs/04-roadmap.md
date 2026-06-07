@@ -2,6 +2,8 @@
 
 按 [数学基础 §6](./01-math-foundations.md#6-诚实的边界rice-定理) 的"性质分层"推进——从可判定的结构层，逐步接入 SMT 与 ITP，并回流到 FDRS。
 
+> **想看"现在该先做哪个"的优先级视图**(而非本文按 Phase 的全貌)?见 [`06-frontier-map.md`](./06-frontier-map.md):现状一页纸 + 按"价值×可行性×复用现有资产"排序的下一程(含新增的"**精化类型档**")。
+
 ## Phase 0 — MVP（✅ 本仓库已完成）
 - [x] acorn 真 AST 抽取 JS 调用图 + 结构事实；多语言正则兜底。
 - [x] AI lifter：离线启发式 + 在线 LLM（Anthropic）两路，输出统一形式事实。
@@ -19,6 +21,7 @@
 
 ## Phase 2 — 接入更强引擎（按性质难度升级）
 - [x] **SMT 层**：已接入 **z3-solver**（WASM Z3，本地跑）。`contract/3` → **Hoare 式蕴含校验**（证明 `pre ⊨ post` 或给反例）；**RBAC 职责分离 (SoD) 一致性**（SAT/UNSAT + witness）——"grep/Datalog 问不出"的组合性质。
+- [x] **精化类型层（★2，2026-06-07）**：新增 `refinement(R, Var, φ, pre|post)` 事实 + **复用 `checkContract` 零重写**判定 `φ_pre ⇒ φ_post`（QF-LIA 可判定片段）；四档裁决 entailed/broken(+反例)/vacuous/**unchecked**（诚实区分"判定不了、需函数体 VC"）。CLI `refine`/`smt refinement`、MCP `refine`（第 13 工具）、5 测试、`rules/refinement.pl`（`:- dynamic` 升级-回滚安全）。详见 [`07-refinement-layer.md`](./07-refinement-layer.md)。把 NL 契约升级为机器可判定谓词，补上 `05 §11`/`§10` 指出的缺档。
 - [x] **演绎验证桥（骨架）**：`contract/3` → **Dafny method 骨架**（requires/ensures）。
 - [ ] **演绎验证（全证明）**：接 Dafny/Verus CLI 真正放电证明义务（参考 ATLAS-Synthesis）。
 - [ ] **时序性质**：把调用图/状态机喂给 **TLA⁺ / 模型检查**（对接仓库 `formal/ReBAC_SPV.tla`）。

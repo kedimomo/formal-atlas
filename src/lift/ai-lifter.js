@@ -13,6 +13,7 @@
  * verifier downstream never knows or cares which path produced them.
  */
 import { fact } from './fact-model.js'
+import { callLLM } from '../llm/index.js'
 
 const EFFECT_HINTS = [
   [/^(fetch|axios|request|got|ajax|XMLHttpRequest)$/, 'network'],

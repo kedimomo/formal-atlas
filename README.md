@@ -22,6 +22,7 @@
 | 改这个函数会影响谁？ | 靠经验 | `impact(target, Caller).` |
 | 名字像"读"却写库？ | 做不到 | `intent(N,read), side_effect(N,database).`（**跨层**查询） |
 | 前置条件真能保证后置条件？ | 做不到 | `smt contract` → z3 **证明**或给**反例** |
+| 契约**可判定、不矛盾**吗？(精化类型 ★2) | 做不到 | `refine`/`smt refinement` → z3 判定 `φ_pre ⇒ φ_post`,给反例/标 vacuous |
 | 角色授权会让同一人既建又批（职责分离漏洞）？ | grep 不出来 | `smt policy` → z3 给 SAT **witness** / UNSAT |
 
 ## 快速开始（零安装，若在本仓库内）
@@ -44,6 +45,10 @@ node src/cli.js query  examples/polyglot "reaches(handle_request, get_from_cache
 # 4) SMT（z3）：契约蕴含 / RBAC 职责分离
 node src/cli.js smt contract examples/contracts/add-positives.json
 node src/cli.js smt policy   examples/policy/rbac-sod.json
+
+# 4b) 精化类型（★2）：判定 φ_pre ⇒ φ_post，给反例/标矛盾（无需 API key）
+node src/cli.js smt refinement examples/refinement/bank.refine.json
+node src/cli.js refine examples/sample-project
 
 # 5) 回流 FDRS：深事实 → 现有 tools/lint/prolog-check.js（六支柱规则触发）
 node src/cli.js fdrs examples/sample-project
@@ -92,11 +97,13 @@ $ node src/cli.js fdrs examples/sample-project          # 喂给"现有"FDRS 校
 | [`docs/02-architecture.md`](./docs/02-architecture.md) | 管线、事实本体、规则插件、精度/soundness、文件职责 |
 | [`docs/03-atlas-comparison.md`](./docs/03-atlas-comparison.md) | **和 Atlas/Logos 是不是一样**：三个 ATLAS 消歧 + 逐项对比 + 真正最像的系统 + Logos「分析式 vs 合成式」 |
 | [`docs/04-roadmap.md`](./docs/04-roadmap.md) | 路线图：points-to / Soufflé / SMT / autoformalization / 回流 FDRS |
+| [`docs/05-math-deepening.md`](./docs/05-math-deepening.md) | **代码↔数学（深化）**：算术分层精化 Rice、Datalog=PTIME、λ-立方体、精化类型、完备性、忠实度、HoTT |
+| [`docs/06-frontier-map.md`](./docs/06-frontier-map.md) | **现状一页纸 + 带优先级的下一程**（四条轴排序，含"精化类型档"） |
 | [`docs/references.md`](./docs/references.md) | 全球文献（含 arXiv 链接） |
 
 ## 现状与边界（诚实）
 
-- ✅ 已跑通：**JS 深抽取 + points-to 指向分析**（死代码误报根治 86→1）、**作用域感知调用解析**（linker 用 import 绑定把跨文件同名函数解析为文件限定节点，死代码误报趋近零）、**多语言 tree-sitter**（Python/Go/Java/Rust/TS，同一 schema）、AI 语义提升（离线+在线）、`reaches/dead_code/cyclic/impact/violation`、**SMT/z3**（契约蕴含证明+反例、RBAC 职责分离）、**数据流污点分析**（`taint-reaches-sink`，CWE-89/79，从 logos 合并强化）、**FDRS 回流桥 + 深事实信号源**（`fdrs-synthesize --deep`）、**MCP server + Claude Code 插件**、CLI、14 个测试、真实代码验证。
+- ✅ 已跑通：**JS 深抽取 + points-to 指向分析**（死代码误报根治 86→1）、**作用域感知调用解析**（linker 用 import 绑定把跨文件同名函数解析为文件限定节点，死代码误报趋近零）、**多语言 tree-sitter**（Python/Go/Java/Rust/TS，同一 schema）、AI 语义提升（离线+在线）、`reaches/dead_code/cyclic/impact/violation`、**SMT/z3**（契约蕴含证明+反例、RBAC 职责分离）、**精化类型层 ★2**（`refinement/4` + z3 判定 `φ_pre ⇒ φ_post`，四档裁决、诚实区分 `unchecked`，见 [`docs/07-refinement-layer.md`](docs/07-refinement-layer.md)）、**数据流污点分析**（`taint-reaches-sink`，CWE-89/79，从 logos 合并强化）、**FDRS 回流桥 + 深事实信号源**（`fdrs-synthesize --deep`）、**MCP server（13 工具）+ Claude Code 插件**、CLI、19 个测试 + MCP 自检、真实代码验证。
 - ⚠️ 已知限制：**反射/高阶/动态分派**指向未解析（跨文件同名已由 linker 根治）；作用域解析的 import 绑定与 points-to 目前**仅 JS**（非 JS 走"本地+全局唯一"较松解析）；正则兜底层仅粗粒度；**污点分析为行级/文件内启发式**（跨过程精确流未做）；LLM 事实是**启发式**、需复核；SMT 契约需用可形式化 DSL 表达。根治方案（Doop 级 points-to、Soufflé、全 Dafny 证明、autoformalization）见路线图。
 - 🧭 原则：**按性质难度分流引擎；可判定优先；LLM 只产事实、永远过求解器才成结论**。
 

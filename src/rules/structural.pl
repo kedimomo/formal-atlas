@@ -35,6 +35,10 @@
 :- dynamic(pure/1).
 :- dynamic(intent/2).
 :- dynamic(contract/3).
+% Formalization relations from the formalize module (may be absent):
+:- dynamic(precondition/2).
+:- dynamic(postcondition/2).
+:- dynamic(invariant/2).
 
 % Local member/2 (avoid depending on library(lists) being loaded).
 % Shared by resolved.pl's cycle-safe reachability.

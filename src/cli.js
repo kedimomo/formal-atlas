@@ -20,6 +20,8 @@ Usage:
   formal-atlas verify  <path> [--lift=offline|online|none]
   formal-atlas query   <path> "<goal>." [--lift=...]
   formal-atlas lift    <path>            (extract + online AI lift)
+  formal-atlas refine  <path> [--online] (lift decidable refinements, Z3-check φ_pre ⇒ φ_post)
+  formal-atlas smt     refinement|contract|policy|dafny <spec.json>
   formal-atlas watch   <path>            (monitor changes, auto-verify)
 
 Examples:
@@ -27,6 +29,8 @@ Examples:
   formal-atlas query  examples/sample-project "reaches(handleRequest, dbQuery)."
   formal-atlas query  examples/sample-project "dead_code(File, Name)."
   formal-atlas query  examples/sample-project "impact(validateUser, Caller)."
+  formal-atlas refine examples/sample-project
+  formal-atlas smt    refinement examples/refinement/bank.refine.json
   formal-atlas watch  <path>            (monitor changes, auto-verify)
 `
 
@@ -54,10 +58,25 @@ async function main() {
   if (cmd === 'smt') {
     const sub = positional[0]
     const file = positional[1]
-    if (!sub || !file) { console.error('usage: formal-atlas smt policy|contract|dafny <spec.json>'); process.exit(2) }
+    if (!sub || !file) { console.error('usage: formal-atlas smt policy|contract|dafny|refinement <spec.json>'); process.exit(2) }
     const spec = JSON.parse(fs.readFileSync(file, 'utf8'))
     const { checkContract, checkPolicy, toDafny } = await import('./verify/smt-bridge.js')
     if (sub === 'dafny') { console.log(toDafny(spec)); process.exit(0) }
+    if (sub === 'refinement') {
+      const { checkRefinementsVerbose } = await import('./verify/refinement-check.js')
+      const facts = (spec.refinements || []).map((r) => ({ pred: 'refinement', args: [r.routine, r.var, r.phi, r.kind] }))
+      const results = await checkRefinementsVerbose(facts)
+      const mark = { entailed: '✅', ok: '✅', unchecked: '○', broken: '❌', vacuous: '❌' }
+      for (const r of results) {
+        console.log(`${mark[r.status] || '?'} ${r.routine}: ${r.status}`)
+        if (r.pre.length) console.log(`     pre : ${r.pre.join(' ∧ ')}`)
+        if (r.post.length) console.log(`     post: ${r.post.join(' ∧ ')}`)
+        if (r.counterexample) console.log(`     counterexample: ${r.counterexample}`)
+      }
+      const bad = results.filter((r) => r.status === 'broken' || r.status === 'vacuous').length
+      console.log(`\n${results.length} refinement specs — ${bad} unsound (broken/vacuous), machine-checked by Z3.`)
+      process.exit(0)
+    }
     if (sub === 'contract') {
       const r = await checkContract(spec)
       console.log(`contract "${r.name}": preconditions ${r.preSat === 'sat' ? 'satisfiable' : 'UNSAT (vacuous!)'}`)
@@ -73,6 +92,21 @@ async function main() {
       process.exit(0)
     }
     console.error(`unknown smt sub: ${sub}`); process.exit(2)
+  }
+
+  if (cmd === 'refine') {
+    const { checkRefinementsVerbose } = await import('./verify/refinement-check.js')
+    const proj = await extractProject(target, { lift, formalize: flags.online ? 'online' : 'offline' })
+    const results = await checkRefinementsVerbose(proj.facts)
+    console.error(`# refine ${target} — ${proj.fileCount} files, ${results.length} routines carry refinements`)
+    const mark = { entailed: '✅', ok: '✅', unchecked: '○', broken: '❌', vacuous: '❌' }
+    for (const r of results) {
+      console.log(`${mark[r.status] || '?'} ${r.routine}: ${r.status}${r.counterexample ? ` — counterexample: ${r.counterexample}` : ''}`)
+    }
+    const bad = results.filter((r) => r.status === 'broken' || r.status === 'vacuous').length
+    const unchecked = results.filter((r) => r.status === 'unchecked').length
+    console.log(`\n${results.length} refinements: ${results.length - bad - unchecked} discharged ✅, ${bad} unsound ❌, ${unchecked} assumptions ○ (need body-level VC, ★8).`)
+    return
   }
 
   if (cmd === 'extract' || cmd === 'lift') {
@@ -110,6 +144,26 @@ async function main() {
   if (cmd === 'watch') {
     const { watch: startWatch } = await import('./watch.js')
     await startWatch(target)
+    return
+  }
+
+  if (cmd === 'formalize') {
+    const { extractProject, buildProgram } = await import('./pipeline.js')
+    const { runQuery } = await import('./verify/prolog-engine.js')
+    const online = argv._[1] === 'online' || process.env.FORMAL_ATLAS_ONLINE === '1'
+    const proj = await extractProject(target, { lift: online ? 'online' : 'offline', formalize: online ? 'online' : 'offline' })
+    const program = buildProgram(proj)
+    console.log(`\n=== Formalization Results (${proj.fileCount} files) ===\n`)
+    const pres = await runQuery(program, "precondition(R, C).")
+    const posts = await runQuery(program, "postcondition(R, C).")
+    const invs = await runQuery(program, "invariant(S, I).")
+    const violations = await runQuery(program, "violation(S, R).")
+    const contractV = violations.filter(v => ['postcondition-contradiction', 'precondition-not-checked', 'invariant-crypto-contradiction', 'invariant-await-contradiction'].includes(v.R))
+    if (pres.length) { console.log('Preconditions:'); pres.forEach(r => console.log(`  ${r.R}: ${r.C}`)) }
+    if (posts.length) { console.log('Postconditions:'); posts.forEach(r => console.log(`  ${r.R}: ${r.C}`)) }
+    if (invs.length) { console.log('Invariants:'); invs.forEach(r => console.log(`  ${r.S}: ${r.I}`)) }
+    if (contractV.length) { console.log('\nContract Violations:'); contractV.forEach(v => console.log(`  ${v.S}: ${v.R}`)) }
+    console.log(`\nTotal: ${pres.length} preconditions, ${posts.length} postconditions, ${invs.length} invariants, ${contractV.length} contract violations`)
     return
   }
 

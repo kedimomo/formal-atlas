@@ -1,0 +1,22 @@
+{
+  "_comment": "Refinement-type demo (roadmap ★2). Each entry attaches a DECIDABLE QF-LIA predicate to a routine's argument (pre) or return value (var 'ret', post). `smt refinement <this>` discharges φ_pre ⇒ φ_post with Z3. Expected verdicts below.",
+  "refinements": [
+    { "routine": "transfer", "var": "amount",  "phi": "amount > 0",          "kind": "pre"  },
+    { "routine": "transfer", "var": "balance", "phi": "balance >= amount",    "kind": "pre"  },
+    { "routine": "transfer", "var": "balance", "phi": "balance - amount >= 0", "kind": "post" },
+
+    { "routine": "withdraw", "var": "amount", "phi": "amount > 0",   "kind": "pre"  },
+    { "routine": "withdraw", "var": "amount", "phi": "amount > 100", "kind": "post" },
+
+    { "routine": "badspec", "var": "x", "phi": "x > 0", "kind": "pre" },
+    { "routine": "badspec", "var": "x", "phi": "x < 0", "kind": "pre" },
+
+    { "routine": "getCount", "var": "ret", "phi": "ret >= 0", "kind": "post" }
+  ],
+  "_expected": {
+    "transfer": "entailed  (balance >= amount  ⊨  balance - amount >= 0)",
+    "withdraw": "broken    (amount > 0  ⊭  amount > 100; counterexample amount=1)",
+    "badspec":  "vacuous   (x > 0 ∧ x < 0 is UNSAT)",
+    "getCount": "unchecked (post with no pre — needs body-level VC, roadmap ★8)"
+  }
+}

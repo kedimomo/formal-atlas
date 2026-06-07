@@ -7,30 +7,54 @@
  * returns a small JSON verdict the agent can act on without loading source.
  */
 import path from 'node:path'
+import fs from 'node:fs'
 import { extractProject, buildProgram } from '../src/pipeline.js'
 import { runQuery } from '../src/verify/prolog-engine.js'
 import { checkContract } from '../src/verify/smt-bridge.js'
+import { checkRefinementsVerbose } from '../src/verify/refinement-check.js'
 import { termOf } from '../src/lift/fact-model.js'
 
 const cache = new Map() // absPath -> { program, files }
 
-async function programFor(p) {
+async function programFor(p, onProgress) {
   const abs = path.resolve(process.cwd(), String(p))
   if (!cache.has(abs)) {
+    if (onProgress) onProgress(`extracting ${abs}...`)
     const proj = await extractProject(abs, { lift: 'offline' })
+    if (onProgress) onProgress(`building Prolog program from ${proj.facts.length} facts...`)
     cache.set(abs, { program: buildProgram(proj), files: proj.fileCount })
+    if (onProgress) onProgress(`cached ${abs} (${proj.fileCount} files)`)
   }
   return cache.get(abs)
 }
 
-async function ask(p, goal) {
-  const { program } = await programFor(p)
+async function ask(p, goal, onProgress) {
+  const { program } = await programFor(p, onProgress)
+  if (onProgress) onProgress(`querying: ${goal}`)
   const g = goal.trim().endsWith('.') ? goal.trim() : `${goal.trim()}.`
   return runQuery(program, g)
 }
 
 const j = (o) => JSON.stringify(o, null, 2)
 const P = { path: { type: 'string', description: 'Dir or file to analyze (relative to cwd, or absolute).' } }
+
+const SIGNAL_FILE_DEFAULT = path.resolve(process.cwd(), 'data', 'fdrs_audit_pending.json')
+
+function ensureDir(filePath) {
+  const d = path.dirname(filePath)
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true })
+}
+
+function inferPillar(rule) {
+  const r = String(rule || '').toLowerCase()
+  if (r.includes('crypto_in_loop') || r.includes('await_in_loop')) return 'where'
+  if (r.includes('hardcoded') || r.includes('sensitive')) return 'boundary'
+  if (r.includes('dead')) return 'whether'
+  if (r.includes('taint') || r.includes('sink')) return 'boundary'
+  if (r.includes('external')) return 'boundary'
+  if (r.includes('intent') || r.includes('effect')) return 'how_correct'
+  return 'meta'
+}
 
 export const TOOLS = [
   {
@@ -69,6 +93,11 @@ export const TOOLS = [
     inputSchema: { type: 'object', properties: { vars: { type: 'object' }, pre: { type: 'array', items: { type: 'string' } }, post: { type: 'array', items: { type: 'string' } }, name: { type: 'string' } }, required: ['vars', 'pre', 'post'] },
   },
   {
+    name: 'refine',
+    description: 'Refinement-type check (Z3): lift DECIDABLE predicate refinements { v:T | φ(v) } on a project\'s routine arguments/returns, then prove φ_pre ⇒ φ_post for each. Flags `vacuous` specs (contradictory preconditions) and `broken` specs (a concrete counterexample input satisfies pre but breaks post); reports `unchecked` posts (no precondition — need body-level VC). The decidable, whole-project upgrade of `contract`. Triggers when user asks: "refinement types", "are the contracts decidable/consistent", "prove the pre guarantees the post over the codebase", "精化类型", "契约可判定吗", "前置能否保证后置".',
+    inputSchema: { type: 'object', properties: { ...P, online: { type: 'boolean', description: 'Use the online LLM lifter to propose refinements (needs API key / MCP sampling); default offline heuristic.' } }, required: ['path'] },
+  },
+  {
     name: 'map',
     description: 'Codebase overview: files, exports, entry points. Returns a compact map so the agent can answer "what\'s in this repo" / "what does this file expose" / "where is X defined" without reading source files (token-cheap). Triggers when user asks: "What\'s in this project?", "Show me the structure", "Where is X defined?", "项目结构?", "这个文件有什么?", "X在哪定义?"',
     inputSchema: { type: 'object', properties: { ...P, mode: { type: 'string', enum: ['overview', 'file', 'symbol'], description: 'overview = per-file headlines (default); file = single file detail; symbol = callers+callees for one symbol' }, target: { type: 'string', description: 'File path (for mode=file) or symbol name (for mode=symbol)' } }, required: ['path'] },
@@ -83,42 +112,72 @@ export const TOOLS = [
     description: 'Automated code review: runs governance check, dead code scan, taint analysis, and impact hotspots in one call. Returns findings sorted by severity. Triggers when user asks: "Review this code", "Code review", "Full analysis", "代码审查", "全面分析", "检查代码"',
     inputSchema: { type: 'object', properties: { ...P, focus: { type: 'string', enum: ['all', 'quick', 'security'], description: 'all = full review (default); quick = overview + governance only; security = governance + taint only' } }, required: ['path'] },
   },
+  {
+    name: 'formalize',
+    description: 'Generate Hoare triples (precondition/postcondition) and loop invariants for functions, then verify against contract rules. Uses IDE LLM via MCP sampling when available, falls back to API key or offline heuristics. Triggers when user asks: "Generate contracts", "What are the preconditions?", "Formalize this code", "生成契约", "前置条件是什么?", "形式化代码"',
+    inputSchema: { type: 'object', properties: { ...P, mode: { type: 'string', enum: ['hoare', 'invariant', 'all'], description: 'hoare = pre/post conditions only; invariant = loop invariants only; all = both (default)' } }, required: ['path'] },
+  },
+  {
+    name: 'deep_signal',
+    description: 'Run formal-atlas deep analysis (governance + dead_code + taint) and emit an FDRS signal file. Chains: extract → review → fdrs-bridge → signal file. After this, call fdrs-mcp rules/evolve to close the FDRS loop. Use when you want to trigger automatic rule evolution from deep code analysis.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...P,
+        focus: { type: 'string', enum: ['all', 'quick', 'security'], description: 'Analysis depth (default: all)' },
+        signalFile: { type: 'string', description: 'Output signal file path (default: data/fdrs_audit_pending.json)' },
+        rulesDir: { type: 'string', description: 'FDRS rules directory (default: .trae/rules/)' },
+      },
+      required: ['path'],
+    },
+  },
 ]
 
-export async function runTool(name, a = {}) {
+export async function runTool(name, a = {}, onProgress) {
   switch (name) {
     case 'reaches': {
-      const rows = await ask(a.path, `reaches(${termOf(a.from)}, ${termOf(a.to)}).`)
+      const rows = await ask(a.path, `reaches(${termOf(a.from)}, ${termOf(a.to)}).`, onProgress)
       return j({ from: a.from, to: a.to, reachable: rows.length > 0, derivations: rows.length })
     }
     case 'dead_code': {
-      const rows = await ask(a.path, 'dead_code(File, Name).')
+      const rows = await ask(a.path, 'dead_code(File, Name).', onProgress)
       return j({ count: rows.length, items: rows.slice(0, 500).map((r) => ({ file: r.File, name: r.Name })) })
     }
     case 'impact': {
-      const rows = await ask(a.path, `impact(${termOf(a.target)}, Caller).`)
+      const rows = await ask(a.path, `impact(${termOf(a.target)}, Caller).`, onProgress)
       return j({ target: a.target, callers: [...new Set(rows.map((r) => r.Caller))] })
     }
     case 'verify': {
-      const rows = await ask(a.path, 'violation(Subject, Rule).')
-      return j({ count: rows.length, violations: rows.slice(0, 500).map((r) => ({ subject: r.Subject, rule: r.Rule })) })
+      if (onProgress) onProgress('running governance verification...')
+      const rows = await ask(a.path, 'violation(Subject, Rule).', onProgress)
+      return j({ count: rows.length, violations: rows.slice(0, 500).map((r) => ({ subject: r.Subject, rule: r.Rule, suggestion: r.suggestion })) })
     }
     case 'taint': {
-      const rows = await ask(a.path, "violation(N, 'taint-reaches-sink').")
+      if (onProgress) onProgress('running taint analysis...')
+      const rows = await ask(a.path, "violation(N, 'taint-reaches-sink').", onProgress)
       return j({ count: rows.length, sinks: rows.slice(0, 500).map((r) => r.N) })
     }
     case 'query': {
-      const rows = await ask(a.path, String(a.goal))
+      const rows = await ask(a.path, String(a.goal), onProgress)
       return j({ goal: a.goal, count: rows.length, rows: rows.slice(0, 500) })
     }
     case 'contract': {
       return j(await checkContract({ vars: a.vars, pre: a.pre, post: a.post, name: a.name }))
     }
+    case 'refine': {
+      const abs = path.resolve(process.cwd(), String(a.path))
+      if (onProgress) onProgress(`extracting + lifting refinements from ${abs}...`)
+      const proj = await extractProject(abs, { lift: 'offline', formalize: a.online ? 'online' : 'offline' })
+      if (onProgress) onProgress(`Z3-checking ${proj.facts.filter((f) => f.pred === 'refinement').length} refinement predicates...`)
+      const results = await checkRefinementsVerbose(proj.facts)
+      const tally = results.reduce((m, r) => ((m[r.status] = (m[r.status] || 0) + 1), m), {})
+      return j({ count: results.length, tally, refinements: results.slice(0, 200) })
+    }
     case 'map': {
-      const { program, files } = await programFor(a.path)
+      const { program, files } = await programFor(a.path, onProgress)
       const mode = a.mode || 'overview'
       if (mode === 'overview') {
-        const rows = await runQuery(program, 'defines(File, Name, Kind).')
+        const rows = await runQuery(program, 'defines(File, Name, Kind, _).')
         const byFile = {}
         for (const r of rows) {
           if (!byFile[r.File]) byFile[r.File] = []
@@ -128,13 +187,13 @@ export async function runTool(name, a = {}) {
       }
       if (mode === 'file') {
         const target = a.target || ''
-        const rows = await runQuery(program, `defines('${target}', Name, Kind).`)
+        const rows = await runQuery(program, `defines('${target}', Name, Kind, _).`)
         const imports = await runQuery(program, `import_binding('${target}', _, _, Name).`)
         return j({ file: target, defines: rows.map(r => ({ name: r.Name, kind: r.Kind })), imports: imports.map(r => r.Name) })
       }
       if (mode === 'symbol') {
         const sym = a.target || ''
-        const defRows = await runQuery(program, `defines(File, '${sym}', Kind).`)
+        const defRows = await runQuery(program, `defines(File, '${sym}', Kind, _).`)
         const callers = await runQuery(program, `caller_of('${sym}', C).`)
         const callees = await runQuery(program, `calls('${sym}', C).`)
         return j({ symbol: sym, definedIn: defRows.map(r => ({ file: r.File, kind: r.Kind })), callers: [...new Set(callers.map(r => r.C))], callees: [...new Set(callees.map(r => r.C))] })
@@ -142,10 +201,10 @@ export async function runTool(name, a = {}) {
       return j({ error: 'unknown mode' })
     }
     case 'search': {
-      const { program } = await programFor(a.path)
+      const { program } = await programFor(a.path, onProgress)
       const results = []
       if (a.pattern) {
-        const rows = await runQuery(program, 'defines(File, Name, Kind).')
+        const rows = await runQuery(program, 'defines(File, Name, Kind, _).')
         const pat = a.pattern.toLowerCase()
         const matches = rows.filter(r => r.Name.toLowerCase().includes(pat))
         for (const m of matches.slice(0, 50)) {
@@ -163,13 +222,13 @@ export async function runTool(name, a = {}) {
       return j({ count: results.length, results })
     }
     case 'review': {
-      const { program } = await programFor(a.path)
+      const { program } = await programFor(a.path, onProgress)
       const focus = a.focus || 'all'
       const findings = []
       // Phase 1: Governance violations
       const violations = await runQuery(program, 'violation(Subject, Rule).')
       const severity = { 'crypto-in-loop': 'CRITICAL', 'await-in-loop': 'HIGH', 'taint-reaches-sink': 'CRITICAL', 'external-call': 'MEDIUM', 'hardcoded-sensitive': 'HIGH', 'intent-effect-mismatch': 'WARN', 'dead-code': 'LOW' }
-      for (const v of violations) findings.push({ subject: v.Subject, rule: v.Rule, severity: severity[v.Rule] || 'MEDIUM', phase: 'governance' })
+      for (const v of violations) findings.push({ subject: v.Subject, rule: v.Rule, severity: severity[v.Rule] || 'MEDIUM', phase: 'governance', suggestion: v.suggestion })
       if (focus === 'quick') return j({ focus, count: findings.length, findings: findings.sort((a, b) => a.severity.localeCompare(b.severity)) })
       // Phase 2: Dead code
       const dead = await runQuery(program, 'dead_code(File, Name).')
@@ -179,6 +238,84 @@ export async function runTool(name, a = {}) {
       const taintRows = await runQuery(program, "violation(N, 'taint-reaches-sink').")
       for (const t of taintRows) findings.push({ subject: t.N, rule: 'taint-reaches-sink', severity: 'CRITICAL', phase: 'taint' })
       return j({ focus, count: findings.length, findings: findings.sort((a, b) => a.severity.localeCompare(b.severity)) })
+    }
+    case 'formalize': {
+      const mode = a.mode || 'all'
+      const { program, facts } = await programFor(a.path)
+      const results = { mode }
+      if (mode === 'hoare' || mode === 'all') {
+        const pres = await runQuery(program, "precondition(R, C).")
+        const posts = await runQuery(program, "postcondition(R, C).")
+        results.preconditions = pres.map(r => ({ routine: r.R, condition: r.C }))
+        results.postconditions = posts.map(r => ({ routine: r.R, condition: r.C }))
+      }
+      if (mode === 'invariant' || mode === 'all') {
+        const invs = await runQuery(program, "invariant(S, I).")
+        results.invariants = invs.map(r => ({ scope: r.S, invariant: r.I }))
+      }
+      // Also run correctness rules
+      const violations = await runQuery(program, "violation(S, R).")
+      const contractViolations = violations.filter(v =>
+        ['postcondition-contradiction', 'precondition-not-checked', 'invariant-crypto-contradiction', 'invariant-await-contradiction'].includes(v.R))
+      results.contractViolations = contractViolations
+      return j(results)
+    }
+    case 'deep_signal': {
+      const targetPath = path.resolve(process.cwd(), String(a.path))
+      if (onProgress) onProgress(`extracting ${targetPath}...`)
+      const proj = await extractProject(targetPath, { lift: 'all' })
+      if (onProgress) onProgress(`building Prolog program from ${proj.facts.length} facts...`)
+      const program = buildProgram(proj)
+
+      // Run review-style governance scan
+      if (onProgress) onProgress('running governance scan...')
+      const violations = await runQuery(program, 'violation(Subject, Rule).')
+      const dead = await runQuery(program, 'dead_code(File, Name).')
+
+      if (onProgress) onProgress('lowering to FDRS concept facts...')
+      const { lowerToFdrs } = await import('../src/integrations/fdrs-bridge.js')
+      const fdrsFacts = lowerToFdrs(proj.facts)
+
+      // Build signal
+      const vItems = violations.map(r => ({
+        file: String(r.Subject || ''), rule: String(r.Rule || ''), message: String(r.suggestion || r.Rule || ''), pillar: inferPillar(r.Rule),
+      }))
+      for (const d of dead) {
+        vItems.push({ file: String(d.File || ''), rule: 'dead-code', message: `${d.Name} is never called`, pillar: 'whether' })
+      }
+
+      const hitPillars = [...new Set(vItems.map(v => v.pillar).filter(Boolean))]
+      const signal = {
+        triggeredAt: new Date().toISOString(),
+        score: Math.min(vItems.length * 3, 30),
+        threshold: 5,
+        reasons: vItems.map(v => `${v.file}: ${v.message}`),
+        hitPillars,
+        source: 'formal-atlas+deep_signal',
+        violationCount: vItems.length,
+        fdrsFactsCount: fdrsFacts.length,
+      }
+
+      // Write signal file
+      const signalFile = a.signalFile || SIGNAL_FILE_DEFAULT
+      ensureDir(signalFile)
+      fs.writeFileSync(signalFile, j(signal))
+      if (onProgress) onProgress(`signal written to ${signalFile}`)
+
+      return j({
+        ok: true,
+        signalFile,
+        violationCount: vItems.length,
+        fdrsFactsCount: fdrsFacts.length,
+        violations: vItems.slice(0, 20),
+        hitPillars,
+        signal,
+        nextStep: {
+          tool: 'fdrs-mcp rules/evolve',
+          params: { phase: 'diagnose', signalFile },
+          hint: 'Call fdrs-mcp rules/evolve(phase=diagnose) with the signalFile above to start the FDRS closed loop.',
+        },
+      })
     }
     default:
       throw new Error(`unknown tool: ${name}`)

@@ -11,6 +11,9 @@ import { dedupe, factsToProlog } from './lift/fact-model.js'
 import { liftOffline, liftOnline } from './lift/ai-lifter.js'
 import { link } from './link/linker.js'
 import { getCached, setCache } from './cache.js'
+import { generateHoareOffline, generateHoareOnline } from './formalize/hoare.js'
+import { generateInvariantsOffline, generateInvariantsOnline } from './formalize/invariant.js'
+import { generateRefinementsOffline, generateRefinementsOnline } from './formalize/refinement.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const RULES_DIR = path.join(__dirname, 'rules')
@@ -42,7 +45,7 @@ export function walkFiles(root) {
   return out
 }
 
-export async function extractProject(root, { lift = 'offline', maxFiles = 5000 } = {}) {
+export async function extractProject(root, { lift = 'offline', formalize = 'off', maxFiles = 5000 } = {}) {
   const files = walkFiles(root).slice(0, maxFiles)
   let facts = []
   const rawLines = []
@@ -69,6 +72,21 @@ export async function extractProject(root, { lift = 'offline', maxFiles = 5000 }
     }
   }
   if (lift !== 'none') facts.push(...liftOffline(facts))
+  // AI formalization: Hoare triples + loop invariants
+  if (formalize !== 'off') {
+    const hoareFacts = formalize === 'online'
+      ? (await generateHoareOnline(facts)).length > 0 ? await generateHoareOnline(facts) : generateHoareOffline(facts)
+      : generateHoareOffline(facts)
+    facts.push(...hoareFacts)
+    const invFacts = formalize === 'online'
+      ? (await generateInvariantsOnline(facts)).length > 0 ? await generateInvariantsOnline(facts) : generateInvariantsOffline(facts)
+      : generateInvariantsOffline(facts)
+    facts.push(...invFacts)
+    // Refinement predicates { v:T | φ } over args/return (decidable QF-LIA, ★2).
+    let refFacts = formalize === 'online' ? await generateRefinementsOnline(facts) : []
+    if (!refFacts.length) refFacts = generateRefinementsOffline(facts)
+    facts.push(...refFacts)
+  }
   // Scope-aware linking: resolve bare-name call edges into a file-qualified
   // graph (decl/node/rcall) so downstream rules stop merging same-name funcs.
   facts.push(...link(facts))

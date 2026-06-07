@@ -50,6 +50,44 @@
 - **TLA⁺ / TLC** — 时序逻辑模型检查（仓库已有 `formal/ReBAC_SPV.tla`）。
 - **Logos Research** (logosresearch.ai, 2026；帝国理工 spinout) — Lean 之上的 **LogosLib** + MCP：AI agent 生成代码时同步产 Lean 证明，验证层放电证明义务、失败即重试，专攻量化金融等高风险域（团队含 Kevin Buzzard）。与本项目的「分析式 vs 合成式」对比见 [03-atlas-comparison.md §四](./03-atlas-comparison.md)。<https://www.logosresearch.ai/>
 
+## I. 05/06 深化的文献锚点（经典基础可靠；最新 2026 链接待联网核验补全）
+
+> 下列支撑 [`05-math-deepening.md`](./05-math-deepening.md) 与 [`06-frontier-map.md`](./06-frontier-map.md)。**经典基础**为公认高被引文献（作者/标题/出处/年份可靠，URL 待补）；末尾"待联网"项需在分类器服务恢复后用 WebSearch/WebFetch 核验并补 arXiv/DOI。
+
+### I-1 可计算性与性质分层（05 §8）
+- Rice, H. G. (1953). **Classes of recursively enumerable sets and their decision problems.** Trans. AMS 74. — 一切非平凡语义性质不可判定。
+- Alpern, B. & Schneider, F. (1985). **Defining Liveness.** Information Processing Letters 21(4). — 安全/活性划分；安全性质 ≈ co-r.e.（Π⁰₁），可被 sound 过近似证明。
+- Manna, Z. & Pnueli, A. (1992). **The Temporal Logic of Reactive and Concurrent Systems.** Springer. — 安全-进展层级。
+- 关键词：arithmetical hierarchy（Σ⁰₁/Π⁰₁/Π⁰₂）、安全=Π⁰₁ 可 sound 过近似、可达=Σ⁰₁ 可欠近似抓真阳。
+
+### I-2 描述复杂度：Datalog/LFP = PTIME（05 §9）
+- Immerman, N. (1986). **Relational queries computable in polynomial time.** Information and Control 68.
+- Vardi, M. (1982). **The complexity of relational query languages.** STOC'82. — 与 Immerman 独立给出 LFP = PTIME（有序有限结构）。
+- Abiteboul, Hull, Vianu (1995). **Foundations of Databases.** Addison-Wesley（第 12–15 章：Datalog 语义与复杂度）。
+
+### I-3 类型论谱系：λ-立方体、CIC、HoTT（05 §10、§14）
+- Barendregt, H. (1991/92). **Lambda calculi with types.** Handbook of Logic in Computer Science, vol. 2. — λ-立方体八角。
+- Coquand, T. & Huet, G. (1988). **The Calculus of Constructions.** Information and Computation 76. — Coq 内核（CIC）之源，λC 顶点。
+- The Univalent Foundations Program (2013). **Homotopy Type Theory: Univalent Foundations of Mathematics.** IAS（HoTT Book）。— 类型=空间、相等=路径、单值公理（05 §14 地平线）。
+
+### I-4 精化类型：缺失的一档（05 §11；路线图 ★2）
+- Freeman, T. & Pfenning, F. (1991). **Refinement types for ML.** PLDI'91. — 精化类型起源。
+- Rondon, Kawaguchi, Jhala (2008). **Liquid Types.** PLDI'08. — 谓词限定可判定 SMT 理论 ⇒ 类型检查可判定 + 谓词抽象自动推断不变式（= 抽象解释实例）。
+- Vazou et al. (2014). **Refinement Types for Haskell.** ICFP'14（Liquid Haskell）。
+- Swamy et al. (2016). **Dependent Types and Multi-Monadic Effects in F\*.** POPL'16。
+
+### I-5 过程间分析与增量 Datalog（06 前沿 ★5–6）
+- Reps, Horwitz, Sagiv (1995). **Precise interprocedural dataflow analysis via graph reachability.** POPL'95. — IFDS：分布式过程间数据流约化为 exploded supergraph 上的图可达（多项式）。
+- Reps, T. (1998). **Program analysis via graph reachability.** Information & Software Technology 40. — CFL-reachability。
+- McSherry, Murray, Isaacs, Isard (2013). **Differential Dataflow.** CIDR'13. — 增量 + 迭代数据流（增量维护最小不动点）；DDlog 为其 Datalog 实现。
+
+### I-6 抽象解释的完备性（05 §12）
+- Giacobazzi, Ranzato, Scozzari (2000). **Making abstract interpretations complete.** JACM 47(2). — 完备抽象的存在性与"完备化"，系统性消误报的理论。
+
+### 待联网核验 / 补充（分类器服务恢复后）
+- 为上列经典文献补 arXiv/DOI/官方链接。
+- 补 2025–2026 最新工作：精化类型综述、autoformalization 忠实度（Verus-SpecGym 后续）、Differential Dataflow/DDlog 近作、IFDS 工程化近作。
+
 ## H. 本仓库内的相关实现（formal-atlas 的"前身"）
 - `tools/lint/assertion-to-prolog.js` — assertion → `violation/2` Horn 子句。
 - `tools/lint/prolog-check.js` — tau-prolog consult + query（**已验证可跑**）。

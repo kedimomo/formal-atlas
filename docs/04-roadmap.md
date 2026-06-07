@@ -16,7 +16,7 @@
 - [x] **轻量指向分析 (points-to)**：已实现 **address-taken 分析**（函数名作为值传递/赋值/返回 → 间接可达，不算死代码）+ 对象字面量方法标 `lambda`。真实代码死代码**误报 86 → 1**。
 - [x] **作用域感知的调用解析**：已实现 **linker**（`src/link/linker.js`）：抽取器发 `calls3/3`（带调用方文件）+ `import_binding/4`，linker 按 **import 绑定 → 同文件本地 → 全局唯一 → extern** 把每条调用解析到**文件限定**节点（`decl/node/rcall`）。跨文件**同名函数不再合并**（实测 `walkDir` 在 5 文件各成独立节点、各自局部递归）；死代码新增 `unresolved_call` 安全网，**误报趋近零**（`../tools/lint` 死代码=1 且为真阳）。
 - [ ] **跨文件/高阶指向分析**：解析动态分派/反射（Doop 级，进一步降误报）。
-- [x] **数据流事实（污点分析）**：已从 logos 草稿**合并并强化**进 `src/extract/taint.js` + `src/rules/taint.pl`：`source/sink/sanitizer/dataflow` → `violation(Sink, 'taint-reaches-sink')`，检测不可信输入(req/argv/location)未净化流到 SQL/命令/XSS 汇(CWE-89/79)。比草稿多了**函数边界重置 + 字符串字面量屏蔽**以降误报;`taint` 也是一个 MCP 工具。**仍为行级/文件内启发式**——跨过程精确流是后续(Doop 级)。
+- [x] **数据流事实（污点分析）**：已从 logos 草稿**合并并强化**进 `src/extract/taint.js` + `src/rules/taint.pl`：`source/sink/sanitizer/dataflow` → `violation(Sink, 'taint-reaches-sink')`，检测不可信输入(req/argv/location)未净化流到 SQL/命令/XSS 汇(CWE-89/79)。比草稿多了**函数边界重置 + 字符串字面量屏蔽**以降误报;`taint` 也是一个 MCP 工具。**★6 第一刀（2026-06-07）**已加 within-file 过程间：`summarizeReturns` 的 tainted-RETURN 摘要让 `const x=helper(req)` 跨调用传播污点（sound-leaning，不引入误报），见 [`10-interprocedural-taint.md`](./10-interprocedural-taint.md)；参数→形参反向、跨文件、完整 IFDS 待续。
 - [ ] **性能**：大库走 **Soufflé**（Datalog→并行 C++）或对 tau-prolog 做 EDB 索引；事实库持久化（ComputeHibernation）。
 
 ## Phase 2 — 接入更强引擎（按性质难度升级）

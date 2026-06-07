@@ -14,16 +14,18 @@
 ## 验证（确认存档可跑）
 ```bash
 cd formal-atlas
-npm test                                                  # 9 smoke + 19 engines(★2×5,★3×4,★4×5...) + MCP 16-工具自检，全绿
+npm test                                                  # 9 smoke + 20 engines(★2/★3/★4/★6) + MCP 16-工具自检，全绿
 node src/cli.js smt faithfulness examples/faithfulness/abs.faithful.json   # ✅ faithful + round-trip ✅ equivalent
-node src/cli.js smt faithfulness examples/faithfulness/too-weak.json        # ❌ too-weak（接受 illegal）
+node src/cli.js verify examples/taint-interproc            # ★6：getName→innerHTML 跨调用真阳；rows()/consume 无误报
 node src/cli.js explain examples/repair                   # ★3 证明树
 node src/cli.js verify  ../src/server/routes              # ★3：taint XSS ~92 → 少数 + "N xss FPs auto-suppressed"
 ```
 回归：`verify examples/sample-project` 仍 7 条违规；taint smoke 仍 1 条 `sink_sql`。
 
-## 下一步：★1–★4 主线已完成，转入"按需"的规模/精度工程（见 06-frontier-map 第 5–8 项）
-不预先铺开，按真实需求选一项启动。**最连贯的下一步是 #6 IFDS/CFL-可达污点**——它把 ★3 刚分诊过的**行级/文件内**污点升级为 **sound 的过程间精确流**（Reps–Horwitz–Sagiv POPL'95，多项式），直接消掉 `sink_ct` 之外的跨过程误报根因。**设计 spec 已写：[`docs/10-interprocedural-taint.md`](docs/10-interprocedural-taint.md)**（按项目"星标实现前先开 spec"的落地约束）——含两遍 tainted-summary 算法、**避免重新引入误报的精确 returns-taint 规则**、升级-回滚安全开关、夹具与测试计划。照它实现即可。其余：
+## 下一步：★1–★4 主线 + ★6 第一刀已完成，余为"按需"的规模/精度工程（06-frontier-map 5–8）
+- **★6 过程间污点·第一刀已实现**（`docs/10-interprocedural-taint.md`，本次）：`src/extract/taint.js` 的 `summarizeReturns` 给 within-file tainted-RETURN 摘要——`const x = helper(req)` 当 helper 返回不可信数据时跨调用污染 x（always-on，sound-leaning，**不引入误报**：`return db.query(taintedArg)` 这类返回"结果而非输入"的不算 conduit）。发 `taint_returns(Fn)` 事实；夹具 `examples/taint-interproc/`、1 测试。
+- **#6 续刀**（最连贯的下一步）：**参数→形参反向传播**（taint-INTO-callee：callee 内 `sink(x)`、x 来自 caller 污点实参）+ **跨文件摘要**（用 linker `rcall/2` + 摘要持久化）→ 最终 exploded-supergraph 上的精确 CFL-可达。
+- 其余：**#5 Soufflé/增量 Datalog**（规模）、**#7 Doop 级指向**（动态分派/反射）、**#8 全 ITP 放电**（Dafny/Verus/Lean，地平线）。
 - **#5 Soufflé / 增量 Datalog**（规模）：大库 tau-prolog 慢 → Datalog→并行 C++；watch 模式增量维护。
 - **#7 Doop 级过程间指向**（精度）：解析动态分派/反射，死代码/污点误报压到工业级。
 - **#8 全 ITP 放电**（地平线）：接 Dafny/Verus/Lean CLI 真正放电证明义务（最严最贵）。

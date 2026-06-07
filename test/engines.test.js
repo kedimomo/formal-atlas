@@ -176,3 +176,15 @@ test('★4 round-trip: Z3 equivalence (equivalent ↔, else a counterexample)', 
   assert.equal(neq.equivalent, false)
   assert.ok(neq.counterexample, 'inequivalence yields a witness')
 })
+
+// ===================== ★6 interprocedural taint (tainted-return summary) =====================
+
+test('★6 interprocedural taint: a tainted-return helper propagates across a call; a db-query wrapper does not', async () => {
+  const program = buildProgram(await extractProject(root('examples/taint-interproc'), { lift: 'none' }))
+  const summaries = (await runQuery(program, 'taint_returns(F).')).map((r) => r.F).sort()
+  assert.deepEqual(summaries, ['getName'], 'only getName returns untrusted data (rows() returns a query RESULT)')
+  const vios = await runQuery(program, "violation(N, 'taint-reaches-sink').")
+  // show(): getName → name tainted → innerHTML fires (1). consume(): r is a db result → no FP.
+  assert.equal(vios.length, 1, 'exactly the interprocedural true positive, no db-wrapper FP')
+  assert.ok(String(vios[0].N).includes('sink_xss'))
+})

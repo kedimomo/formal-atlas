@@ -1,7 +1,7 @@
-# ★6（设计 spec，未实现）过程间污点：tainted-summary，把行级启发式升级为 sound 的跨过程流
+# ★6 过程间污点：tainted-summary，把行级启发式升级为 sound 的跨过程流
 
-> 状态：**设计 spec，尚未实现**。遵循 [`06-frontier-map.md` §落地约束](./06-frontier-map.md)——"动手做 ★X 前，单独开 spec，走升级-回滚安全开关"。★1–★4 主线已收口（`07`/`08`/`09`）；本文是 06-frontier-map 第 6 项（IFDS/CFL-可达污点）的可实现规约。
-> 数学依据：Reps–Horwitz–Sagiv POPL'95（IFDS = exploded supergraph 上的图可达，多项式）；本档先做 IFDS 的**轻量摘要近似**（function summary），不上完整 exploded graph。
+> 状态：**第一刀已实现（2026-06-07）**——within-file、name-resolved 的 tainted-RETURN 摘要。完整 IFDS（exploded supergraph、参数→形参双向、跨文件摘要）仍为后续加刀。
+> 遵循 [`06-frontier-map.md` §落地约束](./06-frontier-map.md)。数学依据：Reps–Horwitz–Sagiv POPL'95（IFDS = exploded supergraph 上的图可达，多项式）；本档先做 IFDS 的**轻量摘要近似**（function summary）。
 
 ## 一、要解决的问题
 
@@ -35,22 +35,21 @@ function q(req){ return db.query('... ' + req.query.id) }  // 返回的是查询
 
 `return f(...)`（E 是函数调用）、`return E.prop`、`return E1 + E2`（拼接结果）**一律不**判 returns-taint（除非整个 E 去掉外层后仍是裸污点变量）。宁可漏报，不可误报——与 ★3 同一条 sound-leaning 主线。
 
-## 四、设计：两遍 + 升级-回滚安全开关
+## 四、实现：两遍，作为 sound-leaning 精度改进（已落地）
 
-`extractTaintJs(fileId, code, { interproc = false } = {})`——**默认 off**，行为与今逐字一致（回滚安全）；`interproc:true` 时启用下述两遍。pipeline 侧加 `taint:'interproc'` 开关（仿 `formalize`），CLI/MCP 显式开启。
+实现在 `src/extract/taint.js` 内，**always-on**（不走开关）——与 points-to/linker 这两次精度改进同样的取舍：§三 的精确 returns-taint 规则保证它**只新增真阳、不引入误报**，故按"严格更优的精度修复可直接应用"处理（也避开了按内容缓存的抽取层加 flag 的缓存键问题）。实测所有现有夹具行为不变（见 §五）。
 
-- **Pass 1（摘要）**：扫全文件，按函数维护 intra-fn 污点（复用现有逻辑），遇 `return E` 按 §三精确规则判定 → 收集 `returnsTaint:Set<fnName>` + 发事实 `taint_returns(fnName)`（可供 Prolog/调试）。需补**函数名抽取**：`function NAME(`、`async function NAME`、`const NAME = (..)=>`、对象/类方法 `NAME(..) {`。
-- **Pass 2（发射，在现有 emit 上增量）**：赋值 `const x = NAME(args)` 且 `NAME ∈ returnsTaint` 时，发 `dataflow(taint_returns_node(NAME), x)` 并 `taint.set(x)`——x 由 helper 引入不可信数据。**纯增量**：只新增 dataflow 边，不改既有边；helper 不在 returnsTaint 时行为不变。
+- **Pass 1（摘要 `summarizeReturns`）**：扫全文件，按函数维护 intra-fn 污点（镜像主循环的 FN_DEF 边界重置），遇 `return E` 按 §三精确规则判定 → 收集 `returnsTaint` 并发事实 `taint_returns(Fn)`。含 `fnNameOf`（`function f`/`const f=()=>`/方法 `f(){`）+ `calleeOf`（`(await) f(..)`）两个名字抽取辅助。
+- **Pass 2（主发射循环，增量）**：赋值 `const x = NAME(args)` 且 `NAME ∈ returnsTaint` 时，发 `source(x)` 并 `taint.set(x)`——x 由 helper 引入不可信数据。**纯增量**：只新增边；helper 不在 returnsTaint 时行为不变。
 
-新事实：`taint_returns(Fn)`、节点 id 形如 `file:line:retsum_<fn>`。`rules/taint.pl` 无需改（新边走既有 `tainted/2` 闭包）；可选加 `:- dynamic(taint_returns/1)`。
+`rules/taint.pl` 加 `:- dynamic(taint_returns/1)`（仅为查询安全，无新规则——新 source 走既有 `tainted/2` 闭包）。
 
-## 五、验证计划（实现时）
+## 五、验证（已落地）
 
-- 新夹具 `examples/taint-interproc/`：`getName`(returns-taint) → handler 经 `.innerHTML`/html `send` 汇（真 XSS，应报）；外加一个 `q(){return db.query(tainted)}`（**不应**判 returns-taint，调用方不应新增误报）。
-- 测试：interproc on ⇒ getName 链报 1 条；`db.query` 包装**不**误报；interproc off ⇒ 与现状逐字一致（回滚）。
-- 回归：`examples/taint` 仍 1 条 `sink_sql`；`sample-project` 仍 7；所有现有测试绿。
-- CLI：`verify <path> --interproc`（或 pipeline `taint` 开关）；MCP `taint`/`verify` 加可选 `interproc` 入参。
+- 夹具 `examples/taint-interproc/handlers.js`：`getName`(returns 裸污点变量 → 是 conduit) → `show()` 经 `.innerHTML` 汇（真 XSS，报）；`rows()`(`return db.query('select * from t')` 返回**结果**、非污点 → **不是** conduit) → `consume()` 用其返回值进 `.innerHTML`（**不报**，证明无误报）。
+- 测试 `test/engines.test.js` ★6：`taint_returns(F)` 仅 `[getName]`（`rows` 不在内）；`violation(taint-reaches-sink)` 恰 1 条（show 的 interproc 真阳，consume 无 FP）。
+- 回归（实测绿）：`examples/taint` 仍 1 条 `sink_sql`；`sample-project` 仍 7 条；全套 `npm test` 通过（9 smoke + 20 engines + MCP 16-工具自检）。
 
-## 六、为什么先停在 spec
+## 六、后续加刀
 
-本档是 06-frontier-map "5–8 按需启动" 的第 6 项；★1–★4 主线已交付。按项目"星标实现前先开 spec、走开关"的落地约束，这里给出可直接照做的规约，留待下一实现轮（含夹具与测试）落地。完整 IFDS（exploded supergraph、参数→形参双向、跨文件摘要）是本框架之后的加刀，再按真实规模需要推进。
+第一刀（tainted-RETURN 摘要）已落地。完整 IFDS 仍待：**参数→形参反向传播**（taint-INTO-callee：`sink(x)` 在 callee、`x` 来自 caller 的污点实参）、**跨文件摘要**（用 linker 的 `rcall/2` 解析跨文件调用 + 持久化摘要）、最终 **exploded supergraph 上的精确 CFL-可达**。按真实规模需要再推进；本框架（摘要 + 既有 `tainted/2` 闭包）可增量承载。

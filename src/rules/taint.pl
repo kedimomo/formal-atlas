@@ -15,6 +15,7 @@
 :- dynamic(sanitizer/1).
 :- dynamic(dataflow/2).
 :- dynamic(sink_ct/2).
+:- dynamic(taint_returns/1).
 
 % A node is tainted if it is a source, or untrusted data flows into it.
 tainted(N) :- tainted_(N, [N]).

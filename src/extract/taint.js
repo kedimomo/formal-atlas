@@ -10,6 +10,9 @@
  * Emits for rules/taint.pl:
  *   source(Id) · sink(Id, Kind) · sanitizer(Id) · dataflow(A, B)   (Id='file:line:tag')
  *   sink_ct(Id, json|html|unknown)   (★3: content-type refinement for xss sinks)
+ *   taint_returns(Fn)                (★6: within-file tainted-RETURN summary)
+ * Intra-function by default; ★6 adds a sound-leaning interprocedural step — a
+ * `const x = helper(..)` where `helper` returns untrusted data taints `x`.
  * Coarse on purpose (intra-file, name-based); the symbolic rules give the verdict.
  */
 import { fact } from '../lift/fact-model.js'
@@ -50,9 +53,63 @@ function classifyXssCt(line) {
   return 'unknown' // e.g. Express res.send(identifier): genuinely ambiguous
 }
 
+const RETURN = /\breturn\s+(.+?);?$/
+const KW = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'function'])
+
+/** Best-effort name of the function a line defines (decl, arrow-const, or method). */
+function fnNameOf(line) {
+  let m = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\(?[\w,\s]*\)?\s*=>/)
+  if (m) return m[1]
+  m = line.match(/(?:async\s+)?function\s+(\w+)/)
+  if (m) return m[1]
+  m = line.match(/^(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{/)
+  if (m && !KW.has(m[1])) return m[1]
+  return null
+}
+
+/** The callee name if `rhs` is `(await) f(...)` — a direct function call. */
+function calleeOf(rhs) {
+  const m = rhs.match(/^(?:await\s+)?(\w+)\s*\(/)
+  return m ? m[1] : null
+}
+
+/**
+ * ★6 pass 1 — within-file tainted-RETURN summaries. A function is a taint conduit
+ * iff it `return`s a BARE tainted variable, or a direct SOURCE access (no call).
+ * `return f(tainted)` is NOT a summary — it returns f's RESULT, not the input —
+ * so interproc stays sound-leaning and adds no false positives (docs/10 §三).
+ * Taint reset mirrors the main loop (FN_DEF boundary) for consistent semantics.
+ */
+function summarizeReturns(code) {
+  const returns = new Set()
+  let taint = new Set()
+  let fn = null
+  for (const raw of code.split('\n')) {
+    const line = raw.trim()
+    if (!line || line.startsWith('//') || line.startsWith('*')) continue
+    if (FN_DEF.test(line)) taint = new Set()
+    const name = fnNameOf(line)
+    if (name) fn = name
+    const asg = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*(.+?);?$/)
+    if (asg) {
+      const rhs = noStr(asg[2])
+      if (SANITIZER.test(rhs)) taint.delete(asg[1])
+      else if (SOURCE.test(rhs) || [...taint].some((v) => mentions(rhs, v))) taint.add(asg[1])
+    }
+    const rm = line.match(RETURN)
+    if (rm && fn) {
+      const e = rm[1].trim()
+      if ((/^[A-Za-z_]\w*$/.test(e) && taint.has(e)) || (!e.includes('(') && SOURCE.test(noStr(e)))) returns.add(fn)
+    }
+  }
+  return returns
+}
+
 export function extractTaintJs(fileId, code) {
   const facts = []
   const taint = new Map() // varName -> node id (currently tainted)
+  const returnsTaint = summarizeReturns(code) // ★6: functions that return untrusted data
+  for (const fn of returnsTaint) facts.push(fact('taint_returns', fn))
   code.split('\n').forEach((raw, i) => {
     const line = raw.trim()
     const ln = i + 1
@@ -73,8 +130,10 @@ export function extractTaintJs(fileId, code) {
       }
       if (SOURCE.test(rhs)) { facts.push(fact('source', id)); taint.set(name, id) }
       else {
+        const callee = calleeOf(rhs)
         const up = [...taint].find(([v]) => mentions(rhs, v))
-        if (up) { facts.push(fact('dataflow', up[1], id)); taint.set(name, id) }
+        if (callee && returnsTaint.has(callee)) { facts.push(fact('source', id)); taint.set(name, id) } // ★6: tainted-return summary
+        else if (up) { facts.push(fact('dataflow', up[1], id)); taint.set(name, id) }
       }
     }
 

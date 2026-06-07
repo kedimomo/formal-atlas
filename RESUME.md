@@ -39,7 +39,7 @@ node src/cli.js verify  ../src/server/routes              # ★3+★6：直接 s
   - **刀7（传递 conduit 同文件不动点）**：补刀6 的同文件漏报——`summarizeReturns` 收尾再跑一个**同文件不动点**:对每条 `[fn,callee]`,callee 是同文件 conduit 即把 fn 并入 `conduits`。于是同文件 `fetchName` 升格 direct conduit（slice-1 `returnsTaint.has` 真）→ 同文件 consumer 直接 source。与刀6 互补（同文件 callee 在此解、跨文件留给 linkTaint）。slice-1 锚点不受影响（taint-interproc 无 `return 裸conduit(..)`,returnCalls 空）。夹具 `examples/taint-localtransitive/`（单文件）、1 测试。
 - **#6 续刀（最连贯的下一步）**：**return-of-tainted-arg**（`function id(x){return x}` 透传形参的返回——区别于"内部制造污点"的 conduit,是 param→return 摘要,可与 param-sink 摘要合流）→ 最终 exploded-supergraph 上把 conduit/param-sink/return 三类摘要统一成 realizable-path CFL-可达。
 - **大前沿推荐序 = 5 → 7 → 8**（用户问过 7→8→5;判定:**#7 需 #5 在前**——Doop 级 points-to 本质是"Datalog 跑在 Soufflé 上",上下文敏感事实爆炸 tau-prolog 扛不住,所以规模引擎 #5 是 #7 的底座;#8 最贵且依赖外部 prover,补的是已诚实的 `unchecked` 档,放最后)：
-  - **#5 Soufflé / 增量 Datalog**（规模，先行）：大库 tau-prolog 慢(实测 145 文件 17s)→ Datalog→并行 C++；watch 模式增量维护。是企业级立项目的的落地前提,也是 #7 的引擎。
+  - **#5 Soufflé / 增量 Datalog**（规模，先行）：大库 tau-prolog 慢(实测 145 文件 17s)→ Datalog→并行 C++；watch 模式增量维护。是企业级立项目的的落地前提,也是 #7 的引擎。**已开 spec `docs/11-scale-engine.md`（2026-06-07）**：profiling 确证 solve 占 85%、瓶颈是传递闭包(`cyclic` 52.8s);零安装纯 JS **半朴素**原型实测 **16ms vs tau-prolog 52.7s ≈ 3300×**——故 #5 的答案是**零安装半朴素 Datalog 引擎(非原生 Soufflé,后者破坏零安装)**,混合分层:半朴素物化 `r_reaches`/`tainted` 闭包 + tau-prolog 收尾,flag-gated、parity 验证。下一增量:`src/verify/datalog.js` + parity 测试。
   - **#7 Doop 级过程间指向**（精度，居中）：建在 Soufflé 上,解析动态分派/反射,把死代码/污点误报压到工业级。
   - **#8 全 ITP 放电**（严谨，地平线/收尾）：接 Dafny/Verus/Lean CLI 真正放电证明义务（最严最贵、需外部工具链）。
 

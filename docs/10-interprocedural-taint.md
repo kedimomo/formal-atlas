@@ -52,4 +52,10 @@ function q(req){ return db.query('... ' + req.query.id) }  // 返回的是查询
 
 ## 六、后续加刀
 
-第一刀（tainted-RETURN 摘要）已落地。完整 IFDS 仍待：**参数→形参反向传播**（taint-INTO-callee：`sink(x)` 在 callee、`x` 来自 caller 的污点实参）、**跨文件摘要**（用 linker 的 `rcall/2` 解析跨文件调用 + 持久化摘要）、最终 **exploded supergraph 上的精确 CFL-可达**。按真实规模需要再推进；本框架（摘要 + 既有 `tainted/2` 闭包）可增量承载。
+第一刀（tainted-RETURN 摘要）已落地。完整 IFDS 仍待：
+
+- **参数→形参反向传播**（taint-INTO-callee：`sink(x)` 在 callee、`x` 来自 caller 的污点实参）。**关键精度约束（实现前必读）**：param-sink 摘要**必须携带内部汇的 content-type 分类**。否则一个 JSON 包装器 `function send(res,obj){ res.send(obj) }` 会把"形参 obj 到达 xss 汇"记成 param-sink，调用 `send(reply, userObj)` 即被误报——**正是 ★3 已消除的那类假 XSS，会在过程间被重新引入**。故摘要需记 `param_sink(Fn, Idx, Kind, Ct)`，并在调用点复用 ★3 的 `html_safe` 抑制（json ⇒ 不报）。这条约束是把第二刀做对（而非倒回 ★3）的核心，单独做需配套夹具（JSON 包装器**不**误报 + 真 HTML 包装器报）。
+- **跨文件摘要**（用 linker 的 `rcall/2` 解析跨文件调用 + 持久化摘要）。
+- 最终 **exploded supergraph 上的精确 CFL-可达**。
+
+按真实规模需要再推进；本框架（摘要 + 既有 `tainted/2` 闭包）可增量承载。

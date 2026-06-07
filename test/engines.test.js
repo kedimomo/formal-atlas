@@ -191,9 +191,9 @@ test('★6 interprocedural taint: a tainted-return helper propagates across a ca
 
 test('★6 slice-2 taint-into-callee: html/sql wrappers flagged, json wrapper suppressed by content-type, receiver not flagged', async () => {
   const program = buildProgram(await extractProject(root('examples/taint-paramsink'), { lift: 'none' }))
-  // Summaries name the VALUE param, never the receiver (el/reply/db at idx 0).
+  // Summaries name the VALUE param (QId-keyed), never the receiver (el/reply/db at idx 0).
   const psinks = (await runQuery(program, 'param_sink(F, I, K, C).')).map((r) => `${r.F}/${r.I}/${r.K}/${r.C}`).sort()
-  assert.deepEqual(psinks, ['render/1/xss/html', 'runSql/1/sql/na', 'sendJson/1/xss/json'])
+  assert.deepEqual(psinks, ['handlers.js::render/1/xss/html', 'handlers.js::runSql/1/sql/na', 'handlers.js::sendJson/1/xss/json'])
   const vios = await runQuery(program, "violation(N, 'taint-reaches-sink').")
   // handleHtml → render(html-sink) and handleSql → runSql(sql-sink) are true positives;
   // handleJson → sendJson is a JSON wrapper (Ct=json), suppressed by the ★3 content-type guard.
@@ -203,4 +203,17 @@ test('★6 slice-2 taint-into-callee: html/sql wrappers flagged, json wrapper su
   assert.ok(subjects.every((s) => !s.includes('sendJson')), 'the JSON wrapper is not a true positive')
   const suppressed = await runQuery(program, 'suppressed_xss(N).')
   assert.ok(suppressed.some((r) => String(r.N).includes('psink_sendJson')), 'json-wrapper flow is suppressed, not silently dropped')
+})
+
+test('★6 slice-3 cross-file taint: a param-sink wrapper in another file is joined; the json wrapper stays suppressed', async () => {
+  const program = buildProgram(await extractProject(root('examples/taint-xfile'), { lift: 'none' }))
+  // param_sink summaries are QId-keyed to the DEFINING file (wrappers.js), the
+  // tainted args originate in handlers.js — a genuine cross-file join.
+  const psinks = (await runQuery(program, 'param_sink(F, I, K, C).')).map((r) => `${r.F}/${r.I}/${r.K}/${r.C}`).sort()
+  assert.deepEqual(psinks, ['wrappers.js::renderHtml/1/xss/html', 'wrappers.js::replyJson/1/xss/json'].sort())
+  const vios = await runQuery(program, "violation(N, 'taint-reaches-sink').")
+  assert.equal(vios.length, 1, 'the cross-file html wrapper is the only true positive')
+  assert.ok(String(vios[0].N).includes('xsink_renderHtml'), 'subject names the cross-file sink')
+  const suppressed = await runQuery(program, 'suppressed_xss(N).')
+  assert.ok(suppressed.some((r) => String(r.N).includes('xsink_replyJson')), 'the cross-file json wrapper is suppressed, not flagged')
 })

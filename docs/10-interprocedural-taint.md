@@ -1,6 +1,6 @@
 # ★6 过程间污点：tainted-summary，把行级启发式升级为 sound 的跨过程流
 
-> 状态：**第一刀 + 第二刀已实现（2026-06-07）**——within-file、name-resolved 的 **tainted-RETURN 摘要**（第一刀）与 **param-sink 摘要 / 参数→形参反向传播**（第二刀，带 content-type 精度护栏）。完整 IFDS（exploded supergraph、跨文件摘要）仍为后续加刀。
+> 状态：**第一刀 + 第二刀 + 第三刀已实现（2026-06-07）**——within-file **tainted-RETURN 摘要**（第一刀）、within-file **param-sink / 参数→形参反向**（第二刀，带 content-type 护栏）、**跨文件 param-sink 连接**（第三刀，QId 摘要 + post-link 解析）。完整 IFDS（returns-taint 跨文件、exploded supergraph）仍为后续加刀。
 > 遵循 [`06-frontier-map.md` §落地约束](./06-frontier-map.md)。数学依据：Reps–Horwitz–Sagiv POPL'95（IFDS = exploded supergraph 上的图可达，多项式）；本档先做 IFDS 的**轻量摘要近似**（function summary）。
 
 ## 一、要解决的问题
@@ -74,11 +74,37 @@ param-sink 摘要**必须携带内部汇的 content-type 分类**。否则一个
 - **真实库实测**（`../src/server/routes`）：slice 2 在路由上发现 **4 处过程间污点实参流入 JSON 包装器**，**全部被 content-type 护栏正确抑制**（0 误报）；唯一存活的 taint 违规仍是既有的**直接** `sink_xss`（非 psink），证明第二刀在工业代码上**只在能论证时报、不倒回 ★3**。
 - 回归（实测绿）：`examples/taint` 仍 1、`sample-project` 仍 7、`repair` 仍 1、`taint-interproc` 仍 1；全套 `npm test` 通过（9 smoke + **21** engines + MCP 16-工具自检）。
 
-## 七、后续加刀（跨文件 + exploded supergraph）
+## 七、第三刀：跨文件 param-sink 连接（已落地 2026-06-07）
 
-within-file 两刀（RETURN 摘要 + param-sink）已落地。完整 IFDS 仍待：
+第二刀的 param-sink 连接在抽取器内、按 bare-name 文件内完成。第三刀把它跨到文件边界——sink 包装器定义在 A 文件，喂污点的调用方在 B 文件：
 
-- **跨文件摘要**（最连贯的下一步）：用 linker 的 `rcall/2` 把调用点解析到 file-qualified 的 callee，再持久化 `param_sink`/`taint_returns` 摘要，使虚拟汇能跨文件连接（当前两刀的摘要按 bare-name 在文件内连接）。
+```js
+// wrappers.js
+export function renderHtml(el, html) { el.innerHTML = html }   // param_sink('wrappers.js::renderHtml', 1, xss, html)
+// handlers.js
+import { renderHtml } from './wrappers.js'
+function showProfile(req) { renderHtml(el, req.query.name) }   // 真 XSS：跨文件连接
+```
+
+### 实现（解析在 link 之后，发射两个可解析事实）
+逐文件抽取器看不到别处的摘要，故**不**急于连接，改发两个可解析事实：
+- `param_sink('File::Fn', Idx, Kind, Ct)`——摘要**改 file-qualified QId 键**（抽取器知道 fileId + fnName），与 linker 的 `decl/4` 同构（`File::Name`）。within-file 连接仍用内存 Map，**行为不变**，只改发射的事实键。
+- `taint_arg(File, Callee, Idx, ArgNode)`——调用点传入的**已污点变量**（复用其既有节点，**不**造新 source，零噪音）。
+
+`src/link/taint-link.js` 的 `linkTaint`（在 `link()` 之后跑，故 `decl/4` 已就绪）把每个 `taint_arg` 的 callee 解析到 QId（**同文件 decl 优先，否则项目内全局唯一 decl**——sound-leaning：歧义名/import 别名留作漏报，**绝不**跨文件误报），cross-file 命中 `param_sink(QId,Idx,Kind,Ct)` 即发与 within-file 同形的**虚拟汇**（`sink`+`sink_ct`+`dataflow`）。same-file 跳过（抽取器已做）。故既有 `violation`/`html_safe` 原样裁决，**Ct=json 包装器跨文件仍被抑制**。
+
+### 验证（已落地）
+- 夹具 `examples/taint-xfile/`：`wrappers.js` 定义 `renderHtml`(html)/`replyJson`(json)，`handlers.js` 跨文件调用。`renderHtml` 跨文件真阳 1 条（`xsink_renderHtml`）；`replyJson` 跨文件被 content-type 护栏**抑制**（`suppressed_xss` 含 `xsink_replyJson`）。
+- 测试 `test/engines.test.js` ★6 slice-3：param_sink 为 `wrappers.js::renderHtml/...`、`wrappers.js::replyJson/...`；`violation` 恰 1（renderHtml），suppressed 含 replyJson。
+- **真实库实测**（`../src/server/routes`）：cross-file 在路由上**新增 0 误报**——唯一存活的 taint 违规仍是既有的直接 `sink_xss`（非 `xsink_`）。
+- 回归（实测绿）：sample-project 7、taint 1、repair 1、taint-interproc 1、taint-paramsink 2 全不变；`npm test` 通过（9 smoke + **22** engines + MCP 16-工具自检）。
+
+## 八、后续加刀（returns-taint 跨文件 + exploded supergraph）
+
+within-file 两刀 + cross-file param-sink 已落地。完整 IFDS 仍待：
+
+- **returns-taint 跨文件**（比 param-sink 跨文件更难）：第一刀的效果是**污染调用方的局部变量**，再反哺调用方文件内的 intra-proc 流——而那流在逐文件 pass 内算完，故跨文件 returns-taint 需要跨文件**不动点迭代**（caller 文件需先知道 callee 返回污点），是更完整的 IFDS 一步。
 - 最终 **exploded supergraph 上的精确 CFL-可达**（Reps–Horwitz–Sagiv 全量 IFDS）。
+- 可选精度：用 linker 的 `import_binding/4` 把 `taint_arg` 的 callee 解析扩到 **import 别名**（当前靠全局唯一 decl，别名调用留作漏报）。
 
-按真实规模需要再推进；本框架（两遍摘要 + 既有 `tainted/2` 闭包 + 调用点虚拟汇）可增量承载。
+按真实规模需要再推进；本框架（两遍摘要 + QId param_sink + taint_arg + 既有 `tainted/2` 闭包 + 调用点/跨文件虚拟汇）可增量承载。

@@ -10,6 +10,7 @@ import { extractFile } from './extract/index.js'
 import { dedupe, factsToProlog } from './lift/fact-model.js'
 import { liftOffline, liftOnline } from './lift/ai-lifter.js'
 import { link } from './link/linker.js'
+import { linkTaint } from './link/taint-link.js'
 import { getCached, setCache } from './cache.js'
 import { generateHoareOffline, generateHoareOnline } from './formalize/hoare.js'
 import { generateInvariantsOffline, generateInvariantsOnline } from './formalize/invariant.js'
@@ -90,6 +91,9 @@ export async function extractProject(root, { lift = 'offline', formalize = 'off'
   // Scope-aware linking: resolve bare-name call edges into a file-qualified
   // graph (decl/node/rcall) so downstream rules stop merging same-name funcs.
   facts.push(...link(facts))
+  // ★6c cross-file taint: resolve taint_arg call sites against param_sink
+  // summaries in other files (needs decl/4 from link above) → virtual sinks.
+  facts.push(...linkTaint(facts))
   facts = dedupe(facts)
   return { facts, rawLines, fileCount: files.length, methods }
 }

@@ -113,3 +113,16 @@ export function callSiteArgs(code2, callee) {
   if (cur.trim()) args.push(cur.trim())
   return args
 }
+
+/**
+ * Bare-name callees invoked on a string-blanked line (`foo(`), excluding dotted
+ * method calls (`x.foo(`) and control keywords. Drives the ★6 cross-file join:
+ * each is a candidate whose formal-param sink summary may live in another file.
+ */
+export function bareCalleesOf(code2) {
+  const out = new Set()
+  const re = /(?:^|[^\w.$])(\w+)\s*\(/g
+  let m
+  while ((m = re.exec(code2))) if (!KW.has(m[1])) out.add(m[1])
+  return out
+}

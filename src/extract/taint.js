@@ -11,19 +11,23 @@
  *   source(Id) · sink(Id, Kind) · sanitizer(Id) · dataflow(A, B)   (Id='file:line:tag')
  *   sink_ct(Id, json|html|unknown)   (★3: content-type refinement for xss sinks)
  *   taint_returns(Fn)                (★6a: within-file tainted-RETURN summary)
- *   param_sink(Fn, Idx, Kind, Ct)    (★6b: formal-param → internal sink summary)
+ *   param_sink('File::Fn', Idx, Kind, Ct)  (★6b: formal-param → internal sink, QId-keyed)
+ *   taint_arg(File, Callee, Idx, ArgNode)  (★6c: a tainted arg at a call site, for the
+ *                                           cross-file join in src/link/taint-link.js)
  * ★6 interprocedural steps (sound-leaning, always-on — they add true positives
  * without reintroducing the ★3 false XSS, see docs/10):
  *   a) `const x = helper(..)` where `helper` returns untrusted data taints `x`.
  *   b) `helper(.., tainted, ..)` where `helper`'s formal at that index reaches a
  *      sink injects a VIRTUAL sink at the call site — reusing the SAME
  *      violation/html_safe rules, so a JSON wrapper (Ct=json) stays suppressed.
+ *   c) the same join across files: the call site emits taint_arg/4 and the
+ *      post-link pass resolves the callee to a param_sink in another file.
  * Coarse on purpose (intra-file, name-based); the symbolic rules give the verdict.
  */
 import { fact } from '../lift/fact-model.js'
 import {
   SOURCE, SANITIZER, SINK, FN_DEF,
-  idOf, noStr, mentions, classifyXssCt, calleeOf, callSiteArgs,
+  idOf, noStr, mentions, classifyXssCt, calleeOf, callSiteArgs, bareCalleesOf,
 } from './taint-patterns.js'
 import { summarizeReturns, summarizeParamSinks } from './taint-interproc.js'
 
@@ -50,7 +54,7 @@ export function extractTaintJs(fileId, code) {
   const returnsTaint = summarizeReturns(code) // ★6a: functions that return untrusted data
   const paramSinks = summarizeParamSinks(code) // ★6b: fn -> [{idx, kind, ct}] reaching a sink
   for (const fn of returnsTaint) facts.push(fact('taint_returns', fn))
-  for (const [fn, list] of paramSinks) for (const { idx, kind, ct } of list) facts.push(fact('param_sink', fn, idx, kind, ct))
+  for (const [fn, list] of paramSinks) for (const { idx, kind, ct } of list) facts.push(fact('param_sink', `${fileId}::${fn}`, idx, kind, ct))
 
   code.split('\n').forEach((raw, i) => {
     const line = raw.trim()
@@ -59,21 +63,26 @@ export function extractTaintJs(fileId, code) {
     if (FN_DEF.test(line)) taint.clear() // taint does not cross function boundaries
     const code2 = noStr(line)
 
-    // ★6b: within-file call to a param-sink helper with a tainted argument →
-    // a virtual sink at the call site (reuses the existing violation rules, so
-    // a provably-JSON wrapper stays suppressed by the ★3 content-type guard).
-    for (const [callee, list] of paramSinks) {
+    // ★6b/c: scan call sites. A tainted-variable argument emits taint_arg/4 (for
+    // the cross-file post-link join). When the callee is a LOCAL param-sink, the
+    // arg is additionally resolved into a virtual sink right here (reusing the
+    // existing violation rules, so a provably-JSON wrapper stays suppressed).
+    for (const callee of bareCalleesOf(code2)) {
       const args = callSiteArgs(code2, callee)
       if (!args) continue
-      for (const { idx, kind, ct } of list) {
-        if (args[idx] == null) continue
-        const src = argSource(args[idx], taint, returnsTaint, facts, fileId, ln, `psrc_${callee}_${idx}`)
-        if (!src) continue
+      const local = paramSinks.get(callee)
+      args.forEach((arg, idx) => {
+        const bare = arg.trim()
+        if (/^[A-Za-z_]\w*$/.test(bare) && taint.has(bare)) facts.push(fact('taint_arg', fileId, callee, idx, taint.get(bare)))
+        const ps = local && local.find((s) => s.idx === idx)
+        if (!ps) return
+        const src = argSource(arg, taint, returnsTaint, facts, fileId, ln, `psrc_${callee}_${idx}`)
+        if (!src) return
         const site = idOf(fileId, ln, `psink_${callee}_${idx}`)
-        facts.push(fact('sink', site, kind))
-        if (kind === 'xss') facts.push(fact('sink_ct', site, ct))
+        facts.push(fact('sink', site, ps.kind))
+        if (ps.kind === 'xss') facts.push(fact('sink_ct', site, ps.ct))
         facts.push(fact('dataflow', src, site))
-      }
+      })
     }
 
     const asg = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*(.+?);?$/)

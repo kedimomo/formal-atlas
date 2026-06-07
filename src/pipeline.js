@@ -12,6 +12,7 @@ import { liftOffline, liftOnline } from './lift/ai-lifter.js'
 import { link } from './link/linker.js'
 import { linkTaint } from './link/taint-link.js'
 import { materialize } from './verify/datalog.js'
+import { pointsTo } from './verify/points-to.js'
 import { getCached, setCache } from './cache.js'
 import { generateHoareOffline, generateHoareOnline } from './formalize/hoare.js'
 import { generateInvariantsOffline, generateInvariantsOnline } from './formalize/invariant.js'
@@ -47,7 +48,7 @@ export function walkFiles(root) {
   return out
 }
 
-export async function extractProject(root, { lift = 'offline', formalize = 'off', maxFiles = 5000, engine = 'prolog' } = {}) {
+export async function extractProject(root, { lift = 'offline', formalize = 'off', maxFiles = 5000, engine = 'prolog', pointsToEnabled = false } = {}) {
   const files = walkFiles(root).slice(0, maxFiles)
   let facts = []
   const rawLines = []
@@ -68,6 +69,16 @@ export async function extractProject(root, { lift = 'offline', formalize = 'off'
     }
     methods[method] = (methods[method] || 0) + 1
     facts.push(...ff)
+    // ★7 points-to: run Andersen per-file (so bare base-relation names can't
+    // collide across files), and lower each resolved variable-call into a
+    // SYNTHETIC calls3 edge — the linker then QId-resolves it exactly like a real
+    // call, so reaches/dead_code see the dynamic-dispatch edge. Opt-in (--points-to).
+    if (pointsToEnabled) {
+      for (const r of pointsTo(ff).resolved) {
+        const [scope, fn] = r.split('\t')
+        facts.push({ pred: 'calls3', args: [fileId, scope, fn] })
+      }
+    }
     if (lift === 'online') {
       const online = await liftOnline(fileId, code, ff)
       if (online) rawLines.push(...online)

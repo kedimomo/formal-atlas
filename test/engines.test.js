@@ -344,6 +344,15 @@ test('★7 points-to: AST extraction resolves a var-aliased dynamic call end-to-
   assert.ok(resolved.has('dispatch\trealHandler'), 'the dynamic call h() resolves to realHandler')
 })
 
+test('★7 points-to link: --points-to lowers the resolved dynamic call into the call graph', async () => {
+  // With --points-to the resolved call becomes a synthetic calls3 edge → the
+  // linker QId-resolves it → reaches/dead_code see the dynamic-dispatch edge.
+  const withPT = await extractProject(root('examples/points-to'), { lift: 'none', pointsToEnabled: true })
+  const withoutPT = await extractProject(root('examples/points-to'), { lift: 'none' })
+  assert.ok(evaluate(withPT.facts).reaches.has('dispatch\trealHandler'), 'points-to lowers dispatch→realHandler into reaches')
+  assert.ok(!evaluate(withoutPT.facts).reaches.has('dispatch\trealHandler'), 'the name-based linker alone cannot resolve the var-call (parity: off = unchanged)')
+})
+
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {
   // A graph WITH a cycle (a→b→c→a) plus c→d and x→a — stresses ancestors×descendants.
   const edges = [['a', 'b'], ['b', 'c'], ['c', 'a'], ['c', 'd'], ['x', 'a']]

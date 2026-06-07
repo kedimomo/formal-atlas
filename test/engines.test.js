@@ -17,6 +17,7 @@ import { repairViolations, verifyPatch } from '../src/repair/loop.js'
 import { scoreFaithfulness, equiv } from '../src/verify/faithfulness.js'
 import { parseExpr, evalExpr } from '../src/verify/smt-dsl.js'
 import { evaluate } from '../src/verify/datalog.js'
+import { pointsTo } from '../src/verify/points-to.js'
 
 const ref = (routine, v, phi, kind) => ({ pred: 'refinement', args: [routine, v, phi, kind] })
 
@@ -296,4 +297,39 @@ test('★5 semi-naive Datalog engine: bit-identical parity with tau-prolog (reac
       assert.ok(eqSet(pl, engSet), `${target} ${name}: engine result set (${engSet.size}) must equal tau-prolog (${pl.size})`)
     }
   }
+})
+
+test('★7 points-to: Andersen pts/resolvedCall engine — least-fixpoint correctness (dynamic dispatch + interproc arg flow)', () => {
+  const f = (pred, ...args) => ({ pred, args })
+  // Scenario: function realHandler(x){}; const fn = realHandler; fn(userData).
+  // A dynamic dispatch (call through a variable) + interprocedural arg flow.
+  // points-to is engine-ONLY: its pts↔assignEdge↔resolvedCall mutual recursion
+  // loops tau-prolog's SLD (no tabling), so we assert the engine against the
+  // hand-computed Andersen least fixpoint — the engine is cycle-safe by design.
+  const facts = [
+    f('alloc', 'realHandler', 'fn:realHandler'),
+    f('isFunction', 'fn:realHandler'),
+    f('assign', 'fn', 'realHandler'),
+    f('calleeVar', 's1', 'fn'),
+    f('argActual', 's1', '0', 'userData'),
+    f('formalParam', 'fn:realHandler', '0', 'x'),
+    f('alloc', 'userData', 'obj:data'),
+  ]
+  const { pts, resolved } = pointsTo(facts)
+  const engPts = []
+  for (const [v, os] of pts) for (const o of os) engPts.push(`${v}\t${o}`)
+  // Hand-computed least fixpoint: fn aliases realHandler; the call resolves; the
+  // actual userData flows to formal x across the resolved call.
+  assert.deepEqual(engPts.sort(), ['fn\tfn:realHandler', 'realHandler\tfn:realHandler', 'userData\tobj:data', 'x\tobj:data'])
+  assert.deepEqual([...resolved].sort(), ['s1\tfn:realHandler'])
+  assert.ok(resolved.has('s1\tfn:realHandler'), 'fn() resolves to realHandler via points-to')
+  assert.ok(pts.get('x')?.has('obj:data'), 'userData flowed to formal x interprocedurally')
+})
+
+test('★7 points-to: cycle-safe — an assign cycle terminates (where tau-prolog SLD would loop)', () => {
+  const f = (pred, ...args) => ({ pred, args })
+  // a = b; b = a; a = obj  — a cyclic assign graph. Andersen LFP: pts(a)=pts(b)={obj}.
+  const { pts } = pointsTo([f('assign', 'a', 'b'), f('assign', 'b', 'a'), f('alloc', 'a', 'obj:o')])
+  assert.deepEqual([...(pts.get('a') || [])], ['obj:o'])
+  assert.deepEqual([...(pts.get('b') || [])], ['obj:o'], 'cycle propagates to fixpoint, no infinite loop')
 })

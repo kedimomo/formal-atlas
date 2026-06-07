@@ -1,0 +1,124 @@
+/**
+ * ★5 zero-install semi-naive Datalog engine (docs/11-scale-engine.md).
+ *
+ * tau-prolog's SLD recomputes subgoals, so the recursive transitive-closure
+ * rules dominate wall-clock (measured: cyclic/1 = 52.8s on 145 files). This
+ * module evaluates exactly that Datalog SUBSET — the closures and the verdicts
+ * layered on them — with delta-driven semi-naive iteration + first-argument
+ * indexing: each derivation fires once, so the same closure lands in ~16ms.
+ *
+ * It is NOT a general Prolog engine: the list-building rules (tainted_path/3)
+ * stay in tau-prolog. It computes the predicates whose Prolog definitions live
+ * in rules/resolved.pl (r_reaches/reaches/cyclic/dead_code) and rules/taint.pl
+ * (tainted), faithfully — see the per-predicate comments and the parity test
+ * (test/datalog.test.js) which asserts bit-identical result sets vs tau-prolog.
+ *
+ * Negation is stratified (¬rcall, ¬r_entry, ¬addr_taken, ¬unresolved_call all
+ * negate predicates that don't depend on dead_code), so a single materialize
+ * pass is sound: compute the closures first, then the negated verdicts.
+ */
+
+/** Per-node forward transitive closure (1+ steps) of an adjacency map. */
+function transitiveClosure(edges) {
+  const reach = new Map() // from -> Set(reachable in 1+ steps)
+  for (const a of edges.keys()) {
+    const seen = new Set()
+    let frontier = [...(edges.get(a) || [])] // 1-step seeds
+    for (const b of frontier) seen.add(b)
+    while (frontier.length) {
+      const next = []
+      for (const n of frontier) {
+        const outs = edges.get(n)
+        if (!outs) continue
+        for (const m of outs) if (!seen.has(m)) { seen.add(m); next.push(m) }
+      }
+      frontier = next
+    }
+    reach.set(a, seen)
+  }
+  return reach
+}
+
+/** Forward-reachable set from `seeds` over `edges` (seeds included). */
+function reachableFrom(seeds, edges) {
+  const seen = new Set(seeds)
+  let frontier = [...seeds]
+  while (frontier.length) {
+    const next = []
+    for (const n of frontier) {
+      const outs = edges.get(n)
+      if (!outs) continue
+      for (const m of outs) if (!seen.has(m)) { seen.add(m); next.push(m) }
+    }
+    frontier = next
+  }
+  return seen
+}
+
+/**
+ * Materialize the recursive Datalog subset from a flat fact array.
+ * @returns {{reaches:Set,cyclic:Set,deadCode:Set,tainted:Set,rReaches:Map}}
+ *   reaches/deadCode/tainted/cyclic are canonical string sets (tab-joined) for
+ *   set-equality parity checks; rReaches is the QId-level closure map.
+ */
+export function evaluate(facts) {
+  const rcall = new Map()
+  const dataflow = new Map()
+  const decls = []
+  const nodeName = new Map()
+  const exportsSet = new Set()
+  const entrySet = new Set()
+  const addrTaken = new Set()
+  const unresolved = new Set()
+  const sources = new Set()
+  const rcallTargets = new Set() // every Q that is some rcall callee (for \+ rcall(_,Q))
+
+  for (const { pred, args } of facts) {
+    const a = args.map(String)
+    if (pred === 'rcall') {
+      if (!rcall.has(a[0])) rcall.set(a[0], new Set())
+      rcall.get(a[0]).add(a[1])
+      rcallTargets.add(a[1])
+    } else if (pred === 'dataflow') {
+      if (!dataflow.has(a[0])) dataflow.set(a[0], new Set())
+      dataflow.get(a[0]).add(a[1])
+    } else if (pred === 'decl') decls.push({ q: a[0], file: a[1], name: a[2], kind: a[3] })
+    else if (pred === 'node') nodeName.set(a[0], a[1])
+    else if (pred === 'exports') exportsSet.add(`${a[0]}\t${a[1]}`)
+    else if (pred === 'entry') entrySet.add(a[0])
+    else if (pred === 'addr_taken') addrTaken.add(`${a[0]}\t${a[1]}`)
+    else if (pred === 'unresolved_call') unresolved.add(a[0])
+    else if (pred === 'source') sources.add(a[0])
+  }
+
+  const rReaches = transitiveClosure(rcall) // r_reaches(A,B)
+  const tainted = reachableFrom(sources, dataflow) // tainted(N): source ∪ forward dataflow
+
+  // cyclic(Name) :- decl(Q,_,Name,routine), r_reaches(Q,Q).
+  const cyclic = new Set()
+  for (const d of decls) if (d.kind === 'routine' && rReaches.get(d.q)?.has(d.q)) cyclic.add(d.name)
+
+  // r_entry(Q) :- decl(Q,File,Name,routine), exports(File,Name) ; decl(Q,_,Name,routine), entry(Name).
+  const isEntry = (d) => exportsSet.has(`${d.file}\t${d.name}`) || entrySet.has(d.name)
+
+  // dead_code(File,Name) — routine, no resolved caller, not entry/addr-taken, name not reached by an unresolved call.
+  const deadCode = new Set()
+  for (const d of decls) {
+    if (d.kind !== 'routine') continue
+    if (rcallTargets.has(d.q) || isEntry(d) || addrTaken.has(`${d.file}\t${d.name}`) || unresolved.has(d.name)) continue
+    deadCode.add(`${d.file}\t${d.name}`)
+  }
+
+  // reaches(A,B) :- node(QA,A), node(QB,B), r_reaches(QA,QB).  (name-level, distinct)
+  const reaches = new Set()
+  for (const [qa, set] of rReaches) {
+    const na = nodeName.get(qa)
+    if (na === undefined) continue
+    for (const qb of set) {
+      const nb = nodeName.get(qb)
+      if (nb !== undefined) reaches.add(`${na}\t${nb}`)
+    }
+  }
+
+  return { reaches, cyclic, deadCode, tainted, rReaches }
+}

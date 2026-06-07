@@ -76,7 +76,15 @@
 #5 是 **#7（Doop 级 points-to）的前置引擎**——上下文敏感 points-to 的事实爆炸正是半朴素 Datalog 的主场（真 Doop = Datalog points-to on 引擎）。所以 #5 先行：先把求解换成半朴素，#7 的 points-to 规则才有跑得动的底座；#8（ITP 放电）最后。详见 `RESUME.md` 路线判断。
 
 ## 八、落地清单（下一增量）
-1. `src/verify/datalog.js`：半朴素 TC + stratified 否定 + 首参索引；输入 facts、输出物化事实。
-2. `pipeline.js`/`prolog-engine.js`：`--engine=datalog` 时，先半朴素物化 `r_reaches`/`tainted` 等 → 旁路递归规则 → tau-prolog 收尾。
-3. parity 测试：两引擎在全夹具 + sample-project 上结果 `deepEqual`。
-4. 在 `routes`/`store/services` 上复测 `violation/2` 与 `cyclic` 的墙钟，记入本文。
+1. ✅ **`src/verify/datalog.js`**（已实现 2026-06-07）：半朴素 TC（`transitiveClosure`/`reachableFrom`）+ stratified 否定 + 首参索引；`evaluate(facts)` 一趟物化 `reaches`/`cyclic`/`deadCode`/`tainted`/`rReaches`。
+2. ☐ `pipeline.js`/`prolog-engine.js`：`--engine=datalog` 时先半朴素物化 → 旁路递归规则 → tau-prolog 收尾 `violation/2`（下一增量）。
+3. ✅ **parity 测试**（`test/engines.test.js` ★5）：sample-project + taint-xfile 上 `reaches/cyclic/dead_code/tainted` 两引擎结果集 `deepEqual`。
+4. ✅ **真实库实测**（`../src/store/services`，145 文件 / 16978 事实）：
+
+   | 谓词 | tau-prolog | 半朴素引擎 | parity | 加速 |
+   |---|---|---|---|---|
+   | `cyclic` | 40 866 ms | **33 ms**（一趟算全部闭包） | ✅ 15=15 | **1238×** |
+   | `dead_code` | 5 859 ms | （同上 33 ms） | ✅ 160=160 | 178× |
+   | `tainted` | 3 631 ms | （同上 33 ms） | ✅ 1=1 | 110× |
+
+   引擎一次 `evaluate` 即 33 ms 算完全部闭包,且与 tau-prolog **逐位一致**。论点证实:零安装半朴素**又对又快**,无需 Soufflé。下一增量是把它接进 `violation/2` 热路径(物化 + 旁路递归规则)。

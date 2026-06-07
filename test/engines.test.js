@@ -16,6 +16,7 @@ import { explainAll } from '../src/verify/explain.js'
 import { repairViolations, verifyPatch } from '../src/repair/loop.js'
 import { scoreFaithfulness, equiv } from '../src/verify/faithfulness.js'
 import { parseExpr, evalExpr } from '../src/verify/smt-dsl.js'
+import { evaluate } from '../src/verify/datalog.js'
 
 const ref = (routine, v, phi, kind) => ({ pred: 'refinement', args: [routine, v, phi, kind] })
 
@@ -273,4 +274,25 @@ test('★6 slice-7 within-file transitive conduit: `return localConduit(..)` is 
   const vios = await runQuery(program, "violation(N, 'taint-reaches-sink').")
   assert.equal(vios.length, 1, 'the same-file 2-hop chain is a true positive')
   assert.ok(String(vios[0].N).includes('handlers.js:18:sink_xss'))
+})
+
+test('★5 semi-naive Datalog engine: bit-identical parity with tau-prolog (reaches/cyclic/dead_code/tainted)', async () => {
+  const canon = (rows, fn) => new Set(rows.map(fn))
+  const eqSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x))
+  // sample-project exercises reaches+dead_code; taint-xfile exercises tainted+reaches.
+  for (const target of ['examples/sample-project', 'examples/taint-xfile']) {
+    const proj = await extractProject(root(target), { lift: 'none' })
+    const program = buildProgram(proj)
+    const eng = evaluate(proj.facts)
+    const cases = [
+      ['reaches', 'reaches(A,B).', (r) => `${r.A}\t${r.B}`, eng.reaches],
+      ['cyclic', 'cyclic(N).', (r) => String(r.N), eng.cyclic],
+      ['dead_code', 'dead_code(F,N).', (r) => `${r.F}\t${r.N}`, eng.deadCode],
+      ['tainted', 'tainted(N).', (r) => String(r.N), eng.tainted],
+    ]
+    for (const [name, goal, fn, engSet] of cases) {
+      const pl = canon(await runQuery(program, goal), fn)
+      assert.ok(eqSet(pl, engSet), `${target} ${name}: engine result set (${engSet.size}) must equal tau-prolog (${pl.size})`)
+    }
+  }
 })

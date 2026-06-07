@@ -65,6 +65,18 @@
 
 半朴素天然支持增量：文件改动 → 重抽取该文件 → 边集 delta → 对闭包做 **DRed/半朴素增量**（加边走半朴素正向、删边走 DRed 反向删+重导），而非全量重算。`cache.js`（已按内容缓存抽取）+ `watch.js` 已是接入点。第一期先做全量半朴素（已证 16 ms，够快）；增量留第二期、按真实 watch 体感需要再上。
 
+### 五·一、与 ReBAC 图引擎经验的对接（"这是个图问题"——已查证可复用）
+formal-atlas 的 `reaches`/`tainted`/`points-to` 本质都是**图可达/传递闭包**;父项目 `src/store/services/rebac/` 有一套**生产级、对账过**的图引擎,直接对口。查证结论:
+
+| ReBAC 技术（文件） | 是什么 | 对接 formal-atlas |
+|---|---|---|
+| **`ClosureService`**（`closure.service.js`） | **O(affected) 增量传递闭包**:加边 (u→v) 只插入 **祖先(u) × 后代(v)** 叉积(`addEdge`)、删边走反向(`removeEdge`)、`rebuild` 全量兜底;闭包物化在 `todo_rebac_closure`(带 distance/path)。 | **正是 watch 增量(本节第二期)的算法**。加边:`ancestors=reach⁻¹(u)∪{u}`、`descendants=reach(v)∪{v}`,`reach[a]∪=descendants`;删边:DRed(过删依赖该边的对 → 重导仍有他路支撑的)。把它从 DB 版搬成内存版(配反向索引 `reachedBy`)。 |
+| **`csr-generator.js`** / `prediction/prototype/webgpu-csr.js` | **CSR(压缩稀疏行)**:`nodeMap`→连续下标 + 邻接数组,缓存友好、低分配。 | 当前引擎用 `Map<node,Set>`(哈希)。**十亿边**时换 CSR(TypedArray 连续布局)再得常数级提速 + 省内存;当前 17k 事实 33ms,Map 够用。 |
+| **`accelerator/{cpu,wasm,webgpu}-impl.js`** | 可插拔 SpMV(稀疏矩阵×向量):闭包 = 布尔矩阵幂迭代到不动点。 | 闭包的**矩阵式**替代算法(GPU/稠密时强);当前 worklist 半朴素已足够,SpMV 留超大/稠密图。 |
+| **`indexing/leopard-index.js`** | Leopard 可达性索引(分层/缓存)。 | 反复查"a 能否到 b"的**点查**索引;formal-atlas 目前多是全量枚举,点查需求出现时再上。 |
+
+**对"能否解决 tau-prolog 性能问题"的判定**:**已解决**——`#5` 半朴素引擎(1238×、33ms)与 `ClosureService` **同族**(都弃 naive 重算、走增量/半朴素)。ReBAC 经验的增值在**下一档规模**:① **增量闭包**(`ClosureService` 算法)→ watch 增量;② **CSR/SpMV/Leopard** → 十亿边。按 `04-roadmap` 的"便宜够用就停":当前全量 33ms 够用,故增量/CSR **按 watch 体感 / 真实超大库需要再上**,不预先铺开;但算法已对账、随时可搬。
+
 ## 六、范围与非目标
 
 - **是**：纯 Datalog 递归闭包子集的半朴素求值 + 物化；分层与 tau-prolog 共存；flag-gated；parity 验证。

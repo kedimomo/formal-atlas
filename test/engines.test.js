@@ -18,6 +18,7 @@ import { scoreFaithfulness, equiv } from '../src/verify/faithfulness.js'
 import { parseExpr, evalExpr } from '../src/verify/smt-dsl.js'
 import { evaluate } from '../src/verify/datalog.js'
 import { pointsTo } from '../src/verify/points-to.js'
+import { closureFromEdges } from '../src/verify/closure-delta.js'
 
 const ref = (routine, v, phi, kind) => ({ pred: 'refinement', args: [routine, v, phi, kind] })
 
@@ -332,4 +333,27 @@ test('★7 points-to: cycle-safe — an assign cycle terminates (where tau-prolo
   const { pts } = pointsTo([f('assign', 'a', 'b'), f('assign', 'b', 'a'), f('alloc', 'a', 'obj:o')])
   assert.deepEqual([...(pts.get('a') || [])], ['obj:o'])
   assert.deepEqual([...(pts.get('b') || [])], ['obj:o'], 'cycle propagates to fixpoint, no infinite loop')
+})
+
+test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {
+  // A graph WITH a cycle (a→b→c→a) plus c→d and x→a — stresses ancestors×descendants.
+  const edges = [['a', 'b'], ['b', 'c'], ['c', 'a'], ['c', 'd'], ['x', 'a']]
+  const { reach } = closureFromEdges(edges) // incremental, edge by edge
+  // Reference: brute-force full transitive closure (per-node BFS).
+  const succ = new Map()
+  for (const [u, v] of edges) { if (!succ.has(u)) succ.set(u, new Set()); succ.get(u).add(v) }
+  const full = new Map()
+  for (const u of new Set(edges.flat())) {
+    const seen = new Set()
+    let fr = [...(succ.get(u) || [])]
+    for (const x of fr) seen.add(x)
+    while (fr.length) { const nx = []; for (const n of fr) for (const m of (succ.get(n) || [])) if (!seen.has(m)) { seen.add(m); nx.push(m) } fr = nx }
+    if (seen.size) full.set(u, seen)
+  }
+  const canon = (m) => { const s = new Set(); for (const [a, r] of m) for (const b of r) s.add(`${a}\t${b}`); return s }
+  const ci = canon(reach); const cf = canon(full)
+  assert.equal(ci.size, cf.size, `incremental ${ci.size} vs full ${cf.size}`)
+  assert.ok([...cf].every((x) => ci.has(x)), 'incremental closure equals full recompute (cycle included)')
+  // sanity: each cycle node reaches all of {a,b,c,d} (incl. itself via the cycle)
+  for (const n of ['a', 'b', 'c']) for (const t of ['a', 'b', 'c', 'd']) assert.ok(reach.get(n)?.has(t), `${n}→${t}`)
 })

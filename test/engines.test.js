@@ -221,3 +221,20 @@ test('★6 slice-3 cross-file taint: param-sink wrappers in another file are joi
   const suppressed = await runQuery(program, 'suppressed_xss(N).')
   assert.ok(suppressed.some((r) => String(r.N).includes('xsink_replyJson')), 'the cross-file json wrapper is suppressed, not flagged')
 })
+
+test('★6 slice-4 cross-file returns-taint: a tainted-RETURN conduit in another file taints the caller (incl. import alias); a db-result wrapper does not', async () => {
+  const program = buildProgram(await extractProject(root('examples/taint-retxfile'), { lift: 'none' }))
+  // The conduit summary is QId-keyed to the DEFINING file (source.js::getName);
+  // rows() returns a db RESULT, so it is NOT a conduit — the slice-1 precision
+  // guard carried across the file boundary.
+  const conduits = (await runQuery(program, 'taint_returns_q(Q).')).map((r) => r.Q).sort()
+  assert.deepEqual(conduits, ['source.js::getName'], 'only getName is a cross-file conduit (rows returns a result)')
+  const vios = await runQuery(program, "violation(N, 'taint-reaches-sink').")
+  const subjects = vios.map((v) => String(v.N)).sort()
+  // show() (direct import) + showAlias() (import ALIAS `grab`) consume getName's tainted
+  // return → two true positives; safe() consumes rows() (non-conduit) → no false positive.
+  assert.equal(vios.length, 2, 'two cross-file return-taint flows flagged (direct import + import alias)')
+  assert.ok(subjects.includes('consumer.js:13:sink_xss'), 'direct-import conduit result reaches the sink')
+  assert.ok(subjects.includes('consumer.js:27:sink_xss'), 'import-aliased conduit result reaches the sink (via import_binding)')
+  assert.ok(!subjects.includes('consumer.js:20:sink_xss'), 'the db-result wrapper is not a conduit → no false positive')
+})

@@ -42,7 +42,9 @@ export function summarizeReturns(code) {
     }
     const rm = line.match(RETURN)
     if (rm && fn) {
-      const e = rm[1].trim()
+      const blanked = noStr(rm[1]) // strings → '' so a // inside one is not seen as a comment
+      const ci = blanked.indexOf('//')
+      const e = (ci >= 0 ? rm[1].slice(0, ci) : rm[1]).trim() // drop a trailing line comment
       if ((/^[A-Za-z_]\w*$/.test(e) && taint.has(e)) || (!e.includes('(') && SOURCE.test(noStr(e)))) returns.add(fn)
     }
   }
@@ -97,4 +99,21 @@ export function summarizeParamSinks(code) {
     }
   }
   return sinks
+}
+
+/**
+ * The set of function names DEFINED in this file (decl / arrow-const / method).
+ * Lets the ★6d cross-file returns-taint pass gate `ret_call` emission to
+ * callees that are NOT local — i.e. genuine import / global candidates — so a
+ * local non-conduit call adds nothing and the fact-base stays lean. A definition
+ * `fnNameOf` misses just leaves its name off the set (the callee is treated as
+ * external → resolved same-file by the linker → skipped: a harmless inert fact).
+ */
+export function localFnNames(code) {
+  const names = new Set()
+  for (const raw of code.split('\n')) {
+    const n = fnNameOf(raw.trim())
+    if (n) names.add(n)
+  }
+  return names
 }

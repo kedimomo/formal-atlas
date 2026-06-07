@@ -11,9 +11,13 @@
  *   source(Id) · sink(Id, Kind) · sanitizer(Id) · dataflow(A, B)   (Id='file:line:tag')
  *   sink_ct(Id, json|html|unknown)   (★3: content-type refinement for xss sinks)
  *   taint_returns(Fn)                (★6a: within-file tainted-RETURN summary)
+ *   taint_returns_q('File::Fn')      (★6d: same, QId-keyed for the cross-file join)
  *   param_sink('File::Fn', Idx, Kind, Ct)  (★6b: formal-param → internal sink, QId-keyed)
  *   taint_arg(File, Callee, Idx, ArgNode)  (★6c: a tainted arg at a call site, for the
  *                                           cross-file join in src/link/taint-link.js)
+ *   ret_call(File, Callee, Xnode)    (★6d: `const x = callee(..)` to a non-local callee —
+ *                                           the post-link join sources Xnode iff Callee
+ *                                           resolves to a tainted-RETURN conduit elsewhere)
  * ★6 interprocedural steps (sound-leaning, always-on — they add true positives
  * without reintroducing the ★3 false XSS, see docs/10):
  *   a) `const x = helper(..)` where `helper` returns untrusted data taints `x`.
@@ -22,6 +26,8 @@
  *      violation/html_safe rules, so a JSON wrapper (Ct=json) stays suppressed.
  *   c) the same join across files: the call site emits taint_arg/4 and the
  *      post-link pass resolves the callee to a param_sink in another file.
+ *   d) the RETURN summary (a) joined across files: a cross-file `const x =
+ *      conduit(..)` taints x via ret_call/3 + the post-link conduit resolution.
  * Coarse on purpose (intra-file, name-based); the symbolic rules give the verdict.
  */
 import { fact } from '../lift/fact-model.js'
@@ -29,7 +35,7 @@ import {
   SOURCE, SANITIZER, SINK, FN_DEF,
   idOf, noStr, mentions, classifyXssCt, calleeOf, callSiteArgs, bareCalleesOf,
 } from './taint-patterns.js'
-import { summarizeReturns, summarizeParamSinks } from './taint-interproc.js'
+import { summarizeReturns, summarizeParamSinks, localFnNames } from './taint-interproc.js'
 
 /**
  * ★6b — resolve a call argument to its taint-source node (or null if clean).
@@ -51,16 +57,18 @@ function argSource(arg, taint, returnsTaint, facts, fileId, ln, tag) {
 export function extractTaintJs(fileId, code) {
   const facts = []
   const taint = new Map() // varName -> node id (currently tainted)
+  const retTaint = new Map() // ★6d varName -> node id (assigned a non-local call result; sourced cross-file)
   const returnsTaint = summarizeReturns(code) // ★6a: functions that return untrusted data
   const paramSinks = summarizeParamSinks(code) // ★6b: fn -> [{idx, kind, ct}] reaching a sink
-  for (const fn of returnsTaint) facts.push(fact('taint_returns', fn))
+  const localFns = localFnNames(code) // ★6d: functions defined here (gate ret_call to non-local callees)
+  for (const fn of returnsTaint) { facts.push(fact('taint_returns', fn)); facts.push(fact('taint_returns_q', `${fileId}::${fn}`)) }
   for (const [fn, list] of paramSinks) for (const { idx, kind, ct } of list) facts.push(fact('param_sink', `${fileId}::${fn}`, idx, kind, ct))
 
   code.split('\n').forEach((raw, i) => {
     const line = raw.trim()
     const ln = i + 1
     if (!line || line.startsWith('//') || line.startsWith('*')) return
-    if (FN_DEF.test(line)) taint.clear() // taint does not cross function boundaries
+    if (FN_DEF.test(line)) { taint.clear(); retTaint.clear() } // taint does not cross function boundaries
     const code2 = noStr(line)
 
     // ★6b/c: scan call sites. A tainted-variable argument emits taint_arg/4 (for
@@ -101,8 +109,10 @@ export function extractTaintJs(fileId, code) {
       else {
         const callee = calleeOf(rhs)
         const up = [...taint].find(([v]) => mentions(rhs, v))
-        if (callee && returnsTaint.has(callee)) { facts.push(fact('source', id)); taint.set(name, id) } // ★6a: tainted-return summary
+        if (callee && returnsTaint.has(callee)) { facts.push(fact('source', id)); taint.set(name, id) } // ★6a: within-file tainted-return summary
         else if (up) { facts.push(fact('dataflow', up[1], id)); taint.set(name, id) }
+        else if (callee && !localFns.has(callee)) { retTaint.set(name, id); facts.push(fact('ret_call', fileId, callee, id)) } // ★6d: x = nonLocal(..) — sourced cross-file iff a conduit
+        else { const rup = [...retTaint].find(([v]) => mentions(rhs, v)); if (rup) { facts.push(fact('dataflow', rup[1], id)); retTaint.set(name, id) } } // ★6d: relabel a candidate downstream
       }
     }
 
@@ -117,6 +127,8 @@ export function extractTaintJs(fileId, code) {
         const sId = idOf(fileId, ln, 'src_inline')
         facts.push(fact('source', sId), fact('dataflow', sId, sinkId))
       }
+      const rtv = [...retTaint].find(([v]) => mentions(code2, v))
+      if (rtv) facts.push(fact('dataflow', rtv[1], sinkId)) // ★6d: inert until the cross-file conduit join sources rtv
       break
     }
   })

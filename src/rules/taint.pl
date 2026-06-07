@@ -16,6 +16,8 @@
 :- dynamic(dataflow/2).
 :- dynamic(sink_ct/2).
 :- dynamic(taint_returns/1).
+:- dynamic(taint_returns_q/1).
+:- dynamic(ret_call/3).
 :- dynamic(param_sink/4).
 
 % ★6b param-sink summaries: param_sink(Fn, Idx, Kind, Ct) records that Fn's
@@ -25,6 +27,13 @@
 % and html_safe rules below fire on interprocedural flows UNCHANGED, and a
 % provably-JSON wrapper (Ct=json) is suppressed exactly as a direct one is.
 % Declared dynamic for query safety; no separate rule needed (docs/10 §六).
+
+% ★6d cross-file RETURN summaries: taint_returns_q('File::Fn') is the QId-keyed
+% conduit fact, and ret_call(File, Callee, Xnode) records `const x = callee(..)`
+% to a non-local callee. The post-link pass (src/link/taint-link.js) resolves
+% Callee to a QId and, when it is a conduit in ANOTHER file, emits source(Xnode)
+% — so the SAME tainted/2 closure carries it to a sink (the within-file edge from
+% Xnode was already laid down). No new rule: the join reuses source/1.
 
 % A node is tainted if it is a source, or untrusted data flows into it.
 tainted(N) :- tainted_(N, [N]).

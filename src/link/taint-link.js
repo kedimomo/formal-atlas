@@ -1,20 +1,25 @@
 /**
- * ★6c cross-file taint join — the post-link half of the param-sink slice.
- *
- * The per-file extractor cannot see another file's summaries, so it emits two
- * resolvable facts instead of joining eagerly:
+ * ★6c/★6d cross-file taint join — the post-link half of the interprocedural
+ * slices. The per-file extractor cannot see another file's summaries, so it
+ * emits resolvable facts instead of joining eagerly:
  *   param_sink('File::Fn', Idx, Kind, Ct)   a formal that reaches an internal sink
  *   taint_arg(File, Callee, Idx, ArgNode)    a tainted value passed at a call site
+ *   taint_returns_q('File::Fn')              a tainted-RETURN conduit (QId-keyed)
+ *   ret_call(File, Callee, Xnode)            `const x = callee(..)` to a non-local callee
  *
  * This pass (run AFTER `link()`, so `decl/4` exists) resolves each call's bare
- * callee to a file-qualified definition and, when that definition lives in a
- * DIFFERENT file and carries a matching param_sink, emits a VIRTUAL sink at the
- * call site — exactly the shape the within-file step emits, so the unchanged
- * violation/html_safe rules fire (and a Ct=json wrapper stays suppressed).
+ * callee to a file-qualified definition. Two joins, both SOUND-leaning:
+ *   ★6c param-sink: when the callee carries a matching param_sink in a DIFFERENT
+ *     file, emit a VIRTUAL sink at the call site — exactly the shape the
+ *     within-file step emits, so the unchanged violation/html_safe rules fire
+ *     (and a Ct=json wrapper stays suppressed).
+ *   ★6d return-taint: when the callee resolves to a conduit (taint_returns_q) in
+ *     a DIFFERENT file, source the assigned var Xnode — the within-file edge from
+ *     Xnode to its sink is already present, so the tainted/2 closure carries it.
  *
- * Resolution is SOUND-leaning, mirroring the linker's order: (1) an ES
- * import_binding (resolve the module specifier to a project file), (2) a
- * same-file definition, (3) a project-global UNIQUE definition. An ambiguous
+ * Resolution mirrors the linker's order: (1) an ES import_binding (resolve the
+ * module specifier to a project file, honoring `import { x as y }` aliases), (2)
+ * a same-file definition, (3) a project-global UNIQUE definition. An ambiguous
  * name (>1 home, no import) is left unresolved — a false negative, never a
  * cross-file false positive. Same-file resolutions are skipped here — the
  * extractor already handled them.
@@ -28,6 +33,8 @@ export function linkTaint(facts) {
   const globalByName = new Map() // name -> Set(qid)
   const fileOfQid = new Map() // qid -> defining file
   const paramSinkByQid = new Map() // qid -> [{ idx, kind, ct }]
+  const conduitQids = new Set() // ★6d qid of a tainted-RETURN conduit (taint_returns_q)
+  const retCalls = [] // ★6d { file, callee, xnode } — `const x = callee(..)` to a non-local callee
   const imports = new Map() // file -> Map(local -> { mod, imported })
 
   for (const { pred, args } of facts) {
@@ -46,6 +53,10 @@ export function linkTaint(facts) {
       const qid = String(args[0])
       if (!paramSinkByQid.has(qid)) paramSinkByQid.set(qid, [])
       paramSinkByQid.get(qid).push({ idx: Number(args[1]), kind: String(args[2]), ct: String(args[3]) })
+    } else if (pred === 'taint_returns_q') {
+      conduitQids.add(String(args[0]))
+    } else if (pred === 'ret_call') {
+      retCalls.push({ file: String(args[0]), callee: String(args[1]), xnode: String(args[2]) })
     }
   }
 
@@ -80,6 +91,15 @@ export function linkTaint(facts) {
       if (s.kind === 'xss') out.push(fact('sink_ct', site, s.ct))
       out.push(fact('dataflow', argNode, site))
     }
+  }
+
+  // ★6d cross-file RETURN join: a `const x = callee(..)` whose callee resolves to
+  // a tainted-RETURN conduit in ANOTHER file sources x — the within-file edge from
+  // x to its sink was already laid down, so the tainted/2 closure now carries it.
+  // Same-file is skipped (the extractor's ★6a step already sourced it).
+  for (const { file, callee, xnode } of retCalls) {
+    const qid = resolve(file, callee)
+    if (qid && fileOfQid.get(qid) !== file && conduitQids.has(qid)) out.push(fact('source', xnode))
   }
   return out
 }

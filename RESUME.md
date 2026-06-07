@@ -14,7 +14,7 @@
 ## 验证（确认存档可跑）
 ```bash
 cd formal-atlas
-npm test                                                  # 9 smoke + 27 engines(★2/★3/★4/★5/★6) + MCP 16-工具自检,全绿
+npm test                                                  # 9 smoke + 30 engines(★2/★3/★4/★5/★6/★7) + MCP 16-工具自检,全绿
 node src/cli.js smt faithfulness examples/faithfulness/abs.faithful.json   # ✅ faithful + round-trip ✅ equivalent
 node src/cli.js verify examples/taint-interproc            # ★6 刀1：getName→innerHTML 跨调用真阳；rows()/consume 无误报
 node src/cli.js verify examples/taint-paramsink            # ★6 刀2：render(html)/runSql(sql) 真阳 2 条；sendJson(json) 抑制 1 条
@@ -40,8 +40,9 @@ node src/cli.js verify  ../src/server/routes              # ★3+★6：直接 s
 - **#6 续刀（最连贯的下一步）**：**return-of-tainted-arg**（`function id(x){return x}` 透传形参的返回——区别于"内部制造污点"的 conduit,是 param→return 摘要,可与 param-sink 摘要合流）→ 最终 exploded-supergraph 上把 conduit/param-sink/return 三类摘要统一成 realizable-path CFL-可达。
 - **大前沿推荐序 = 5 → 7 → 8**（用户问过 7→8→5;判定:**#7 需 #5 在前**——Doop 级 points-to 本质是"Datalog 跑在 Soufflé 上",上下文敏感事实爆炸 tau-prolog 扛不住,所以规模引擎 #5 是 #7 的底座;#8 最贵且依赖外部 prover,补的是已诚实的 `unchecked` 档,放最后)：
   - **#5 Soufflé / 增量 Datalog**（规模，先行）：大库 tau-prolog 慢(实测 145 文件 17s),瓶颈是传递闭包(`cyclic` 52.8s)。**spec `docs/11` + 引擎 + verify 集成已落地（2026-06-07）**:`src/verify/datalog.js` 零安装半朴素引擎(`evaluate`/`materialize`)+ parity 测试(★5)——闭包查询 `cyclic/dead_code/tainted` 与 tau-prolog **逐位一致**,引擎一趟 **33ms** vs tau-prolog 40.9+5.9+3.6s(**110×–1238×**);`--engine=datalog` 经 `engine_materialized` 守卫接进 `violation/2`(物化 dead_code/tainted + 旁路递归规则),实测 violation/2 solve **6.4s→4.3s(1.5×),parity 294=294**(只 1.5× 因 violation 成本分散;CLI 默认 lift=offline 掩盖该加速)。答案是**零安装半朴素引擎(非原生 Soufflé)**。**闭包查询路由 + MCP 集成已落地**:`queryEngine` 把 CLI `query --engine=datalog` 与 **MCP `query` 工具**的 `cyclic/reaches/dead_code/tainted/impact`(全变量 goal)直接由引擎应答——实测 `cyclic` 在 store/services **52s→1.8s 端到端**;MCP `programFor` 改用 `engine='datalog'`(物化 dead_code/tainted),verify/dead_code/taint 工具自动提速、parity 保持(MCP 自检通过)。下一增量(可选):watch 增量维护(半朴素 DRed,docs/11 §五)。**★5 全交付完成**。
-  - **#7 Doop 级过程间指向**（精度，居中）：建在 Soufflé 上,解析动态分派/反射,把死代码/污点误报压到工业级。
+  - **#7 Doop 级过程间指向**（精度，居中）：建在半朴素引擎上,解析动态分派/反射,把死代码/污点误报压到工业级。**spec `docs/12` + 引擎核心已落地（2026-06-07）**:`src/verify/points-to.js` 字段/上下文不敏感 **Andersen** points-to(worklist 最小不动点,cycle-safe);`resolvedCall(Site,Fn)` 解析"经变量调用"→ 捕获动态分派/高阶。**points-to 是首个引擎专属能力**(pts↔assignEdge↔resolvedCall 互递归会令 tau-prolog SLD 死循环),故无 tau-prolog 参考,测试断言手算 Andersen 最小不动点 + cycle-safe(★7,2 测试)。**下一刀(交付价值)**:AST 抽取 alloc/assign/calleeVar/argActual/formalParam + `resolvedCall→rcall` 合流(flag `--points-to`),measure 死代码/污点 FP 下降。
   - **#8 全 ITP 放电**（严谨，地平线/收尾）：接 Dafny/Verus/Lean CLI 真正放电证明义务（最严最贵、需外部工具链）。
+- **ReBAC 图经验对接（已查证 2026-06-07，回应"这是图问题")**：`reaches/tainted/points-to` 都是图可达;父仓 `src/store/services/rebac/` 的 **`ClosureService`(O(affected) 增量闭包=祖先×后代)、`csr-generator`(CSR)、`accelerator`(SpMV)、`leopard-index`** 是对口的生产级经验。判定:**tau-prolog 性能问题已由 #5 半朴素引擎解决**(与 ClosureService 同族);ReBAC 增值在下一档——**已把 `ClosureService` 增量闭包移植成内存版** `src/verify/closure-delta.js`(`addEdge` 祖先×后代,验证 增量==全量含环;watch 二期基元,DRed 删边待续),CSR/SpMV 留十亿边按需。见 `docs/11` §五·一。
 
 ## 待办尾巴（可选，低优先）
 - 真机 `repair --online` / `roundTrip` 在线（需 `ANTHROPIC_API_KEY` 或 IDE MCP 采样）跑一遍。

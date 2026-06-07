@@ -1,6 +1,6 @@
 # RESUME — 下次从这里继续
 
-> 本次会话存档点（2026-06-07，★6 **第五刀完成** → 过程间污点五刀：RETURN 摘要 + within-file param-sink + 跨文件 param-sink + 跨文件 returns-taint + **跨文件 2-hop（returns→param-sink）**）。本文件 + 自动记忆（`formal-atlas-subsystem.md`）共同记录"我停在哪、下一步做什么"。
+> 本次会话存档点（2026-06-07，★6 **第六刀完成** → 过程间污点六刀：RETURN 摘要 + within-file param-sink + 跨文件 param-sink + 跨文件 returns-taint + 跨文件 2-hop + **传递 conduit A→B→C 跨文件不动点**）。本文件 + 自动记忆（`formal-atlas-subsystem.md`）共同记录"我停在哪、下一步做什么"。
 
 ## 当前所在分支
 **`star2-refinement-types`**（main 是默认分支；★2/★3/★4/★6 + 累积 WIP 都在此分支，安全可回退）。
@@ -14,26 +14,28 @@
 ## 验证（确认存档可跑）
 ```bash
 cd formal-atlas
-npm test                                                  # 9 smoke + 24 engines(★2/★3/★4/★6) + MCP 16-工具自检,全绿
+npm test                                                  # 9 smoke + 25 engines(★2/★3/★4/★6) + MCP 16-工具自检,全绿
 node src/cli.js smt faithfulness examples/faithfulness/abs.faithful.json   # ✅ faithful + round-trip ✅ equivalent
 node src/cli.js verify examples/taint-interproc            # ★6 刀1：getName→innerHTML 跨调用真阳；rows()/consume 无误报
 node src/cli.js verify examples/taint-paramsink            # ★6 刀2：render(html)/runSql(sql) 真阳 2 条；sendJson(json) 抑制 1 条
 node src/cli.js verify examples/taint-xfile                # ★6 刀3：跨文件 renderHtml + 别名 paint 真阳 2 条；replyJson(json) 跨文件抑制 1 条
 node src/cli.js verify examples/taint-retxfile             # ★6 刀4：跨文件 conduit getName + 别名 grab 真阳 2 条；rows() 非 conduit 无误报
 node src/cli.js verify examples/taint-2hop                 # ★6 刀5：getName conduit→render(html) 跨文件 2-hop 真阳 1 条；→replyJson(json) 跨 2 跳抑制
+node src/cli.js verify examples/taint-transitive           # ★6 刀6：A→B→C 传递 conduit(fetchName=return getName) 跨文件不动点真阳 1 条
 node src/cli.js explain examples/repair                   # ★3 证明树
 node src/cli.js verify  ../src/server/routes              # ★3+★6：直接 sink_xss 1 条；95 假 XSS 抑制 + 过程间 json 全抑制（0 误报）
 ```
 回归：`verify examples/sample-project` 仍 7 条违规；taint smoke 仍 1 条 `sink_sql`。
 
-## 下一步：★1–★4 主线 + ★6 五刀已完成,余为"按需"的规模/精度工程（06-frontier-map 5–8）
-- **★6 过程间污点·五刀已实现**（`docs/10-interprocedural-taint.md`）：
+## 下一步：★1–★4 主线 + ★6 六刀已完成,余为"按需"的规模/精度工程（06-frontier-map 5–8）
+- **★6 过程间污点·六刀已实现**（`docs/10-interprocedural-taint.md`）：
   - **刀1（tainted-RETURN 摘要）**：`summarizeReturns` 给 within-file tainted-RETURN 摘要——`const x = helper(req)` 当 helper 返回不可信数据时跨调用污染 x（sound-leaning，`return db.query(arg)` 这类返回"结果而非输入"的不算 conduit）。发 `taint_returns(Fn)`；夹具 `examples/taint-interproc/`。
   - **刀2（参数→形参反向 / param-sink）**：`summarizeParamSinks` 给 `param_sink('File::Fn',Idx,Kind,Ct)` 摘要——只测 `sinkValueExpr` 的危险值位置、**排除接收者**（db/res/reply）；调用点发**虚拟汇**复用既有 `violation`/`html_safe`，故 **Ct=json 包装器在过程间被原样抑制**（不倒回 ★3）。夹具 `examples/taint-paramsink/`。
   - **刀3（跨文件 param-sink 连接）**：抽取器发 QId 键 `param_sink` + `taint_arg(File,Callee,Idx,ArgNode)`；`src/link/taint-link.js` 在 `link()` 后把 callee 解析到 QId（**复用 linker 同序：import_binding 别名 → 同文件 → 全局唯一 decl**，sound）→ cross-file 命中即发虚拟汇，json 仍抑制。夹具 `examples/taint-xfile/`（含 `import {x as y}` 别名）。实测路由上 cross-file 0 误报。
   - **刀4（跨文件 returns-taint 连接）**：抽取器发 QId 键 conduit 摘要 `taint_returns_q('File::Fn')` + `ret_call(File,Callee,Xnode)`（`localFnNames` gate 到非本文件 callee）；**独立 `retTaint` map**（与主 taint 分离 → 现有行为 bit-identical）铺 inert 下游边；`taint-link.js` 复用刀3 同一 `resolve()` 把 callee 解析到 QId,跨文件命中 conduit 即注入 `source(Xnode)` 激活那条边（零新规则,只发 source/1）。`summarizeReturns` 顺带修了**行尾注释剥离**（`return n // x` 真实代码必备）。夹具 `examples/taint-retxfile/`（getName conduit + rows 非 conduit + `getName as grab` 别名）、1 测试。实测路由/auth 上 0 误报。
   - **刀5（跨文件 2-hop：returns→param-sink 组合）**：`taint.js` 的 `taint_arg` 发射**扩到 `retTaint` 变量**——conduit 结果作为污点实参传给另一个跨文件 param-sink 包装器时,刀3 与刀4 两个跨文件 join 自然组合（刀4 注入 `source(Xnode)`,刀3 在 Xnode 发虚拟汇）。**content-type 护栏跨两跳仍成立**（json 包装器照抑制）；`taint_arg/4` 补声明 `:- dynamic` 保空查询安全。夹具 `examples/taint-2hop/`（三文件:getName→render(html) 真阳、→replyJson(json) 抑制）、1 测试。实测路由 +0.7% 事实、0 新误报。
-- **#6 续刀（最连贯的下一步）**：**传递 conduit（A→B→C 跨文件不动点）**——`B` 的 conduit 性若依赖 `return C(req)` 而 `C` 是另一文件 conduit,需把刀4 `ret_call` 解析出的 source 喂回 conduit 摘要并迭代到不动点（当前 `summarizeReturns` 只在文件内判 conduit、单趟解析）→ 最终 exploded-supergraph 上的精确 CFL-可达。
+  - **刀6（传递 conduit A→B→C 跨文件不动点）**：`summarizeReturns` 改返回 `{conduits, returnCalls}`,遇 `return callee(..)`（`calleeOf` 只认裸 callee,dotted 天然排除）收集 `[fn,callee]` → 发 `ret_returns_call('File::Fn',Callee)`；`taint-link.js` 在 return-join 前跑**跨文件不动点**——复用同一 `resolve()` 把 callee 解析到 QId,命中 conduit 集即并入 QFn,迭代到不变（单调有界必终止;自递归/环无基础 conduit 则不传播）。新并入的传递 conduit 也发 `taint_returns_q` 便于 query/explain。夹具 `examples/taint-transitive/`（source.getName→delegate.fetchName→consumer.show）、1 测试。已知限制:consumer 与传递 conduit 同文件时 return-join 跳过 same-file（文档注明）。实测路由 0 新误报。
+- **#6 续刀（最连贯的下一步）**：**文件内传递 conduit**（不动点只闭包跨文件集,同文件委托链仍漏——需 within-file 摘要内也跑 conduit 不动点）+ **return-of-tainted-arg**（`function id(x){return x}` 透传形参的返回,是 param→return 摘要,可与 param-sink 合流）→ 最终 exploded-supergraph 上把 conduit/param-sink/return 三类摘要统一成 realizable-path CFL-可达。
 - **#5 Soufflé / 增量 Datalog**（规模）：大库 tau-prolog 慢 → Datalog→并行 C++；watch 模式增量维护。
 - **#7 Doop 级过程间指向**（精度）：解析动态分派/反射，死代码/污点误报压到工业级。
 - **#8 全 ITP 放电**（地平线）：接 Dafny/Verus/Lean CLI 真正放电证明义务（最严最贵）。

@@ -13,19 +13,28 @@
  */
 import {
   SOURCE, SANITIZER, SINK, FN_DEF, RETURN,
-  noStr, mentions, classifyXssCt, fnNameOf, paramsOf, sinkValueExpr,
+  noStr, mentions, classifyXssCt, fnNameOf, calleeOf, paramsOf, sinkValueExpr,
 } from './taint-patterns.js'
 
 const isComment = (line) => !line || line.startsWith('//') || line.startsWith('*')
 
 /**
- * Pass 1a — tainted-RETURN summaries. A function is a taint conduit iff it
- * `return`s a BARE tainted variable, or a direct SOURCE access (no call).
- * `return f(tainted)` is NOT a summary — it returns f's RESULT, not the input —
- * so interproc stays sound-leaning and adds no false positives (docs/10 §三).
+ * Pass 1a — tainted-RETURN summaries. Returns `{ conduits, returnCalls }`:
+ *   conduits     Set<Fn>          a function is a conduit iff it `return`s a BARE
+ *                                 tainted variable or a direct SOURCE access.
+ *   returnCalls  [[Fn, Callee]]   `return callee(..)` to a BARE callee — Fn is a
+ *                                 conduit IFF Callee is (a transitive conduit,
+ *                                 resolved against the conduit set post-link in
+ *                                 taint-link.js — the ★6 slice-6 cross-file
+ *                                 fixpoint). A method/dotted callee (`db.query`)
+ *                                 is not bare → never a transitive conduit.
+ * `return f(tainted)` alone is NOT a direct summary — it returns f's RESULT, not
+ * the input — so the base case stays sound-leaning; transitivity only fires when
+ * f is itself a proven conduit (docs/10 §三, §十).
  */
 export function summarizeReturns(code) {
-  const returns = new Set()
+  const conduits = new Set()
+  const returnCalls = []
   let taint = new Set()
   let fn = null
   for (const raw of code.split('\n')) {
@@ -45,10 +54,12 @@ export function summarizeReturns(code) {
       const blanked = noStr(rm[1]) // strings → '' so a // inside one is not seen as a comment
       const ci = blanked.indexOf('//')
       const e = (ci >= 0 ? rm[1].slice(0, ci) : rm[1]).trim() // drop a trailing line comment
-      if ((/^[A-Za-z_]\w*$/.test(e) && taint.has(e)) || (!e.includes('(') && SOURCE.test(noStr(e)))) returns.add(fn)
+      if ((/^[A-Za-z_]\w*$/.test(e) && taint.has(e)) || (!e.includes('(') && SOURCE.test(noStr(e)))) conduits.add(fn)
+      const callee = calleeOf(e)
+      if (callee) returnCalls.push([fn, callee]) // transitive candidate (resolved post-link)
     }
   }
-  return returns
+  return { conduits, returnCalls }
 }
 
 /**

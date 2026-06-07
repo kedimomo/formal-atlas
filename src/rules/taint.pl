@@ -18,6 +18,7 @@
 :- dynamic(taint_returns/1).
 :- dynamic(taint_returns_q/1).
 :- dynamic(ret_call/3).
+:- dynamic(ret_returns_call/2).
 :- dynamic(taint_arg/4).
 :- dynamic(param_sink/4).
 

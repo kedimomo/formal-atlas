@@ -251,3 +251,14 @@ test('★6 slice-5 cross-file 2-hop: a returns-taint conduit result passed to a 
   const suppressed = (await runQuery(program, 'suppressed_xss(N).')).map((r) => String(r.N))
   assert.ok(suppressed.some((s) => s.includes('xsink_replyJson')), 'the 2-hop json flow is suppressed, not silently dropped')
 })
+
+test('★6 slice-6 transitive conduit: `return callee(..)` makes a function a conduit iff callee is (A→B→C cross-file fixpoint)', async () => {
+  const program = buildProgram(await extractProject(root('examples/taint-transitive'), { lift: 'none' }))
+  // getName (file C) is a direct conduit; fetchName (file B) `return getName(req)`
+  // becomes one via the fixpoint; show (file A) consumes fetchName's result.
+  const conduits = (await runQuery(program, 'taint_returns_q(Q).')).map((r) => r.Q).sort()
+  assert.deepEqual(conduits, ['delegate.js::fetchName', 'source.js::getName'], 'the fixpoint surfaces the transitive conduit')
+  const vios = await runQuery(program, "violation(N, 'taint-reaches-sink').")
+  assert.equal(vios.length, 1, 'the A→B→C transitive chain is a single true positive')
+  assert.ok(String(vios[0].N).includes('consumer.js:10:sink_xss'), 'the sink two hops down the chain fires')
+})

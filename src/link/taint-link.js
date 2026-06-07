@@ -1,28 +1,33 @@
 /**
- * ★6c/★6d cross-file taint join — the post-link half of the interprocedural
- * slices. The per-file extractor cannot see another file's summaries, so it
- * emits resolvable facts instead of joining eagerly:
+ * ★6c/★6d/slice-6 cross-file taint join — the post-link half of the
+ * interprocedural slices. The per-file extractor cannot see another file's
+ * summaries, so it emits resolvable facts instead of joining eagerly:
  *   param_sink('File::Fn', Idx, Kind, Ct)   a formal that reaches an internal sink
  *   taint_arg(File, Callee, Idx, ArgNode)    a tainted value passed at a call site
  *   taint_returns_q('File::Fn')              a tainted-RETURN conduit (QId-keyed)
  *   ret_call(File, Callee, Xnode)            `const x = callee(..)` to a non-local callee
+ *   ret_returns_call('File::Fn', Callee)     `return callee(..)` — a transitive conduit
  *
  * This pass (run AFTER `link()`, so `decl/4` exists) resolves each call's bare
- * callee to a file-qualified definition. Two joins, both SOUND-leaning:
+ * callee to a file-qualified definition. Joins, all SOUND-leaning:
  *   ★6c param-sink: when the callee carries a matching param_sink in a DIFFERENT
  *     file, emit a VIRTUAL sink at the call site — exactly the shape the
  *     within-file step emits, so the unchanged violation/html_safe rules fire
  *     (and a Ct=json wrapper stays suppressed).
- *   ★6d return-taint: when the callee resolves to a conduit (taint_returns_q) in
- *     a DIFFERENT file, source the assigned var Xnode — the within-file edge from
- *     Xnode to its sink is already present, so the tainted/2 closure carries it.
+ *   slice-6 transitive conduits: before the return-join, close the conduit set to
+ *     a fixpoint — `return callee(..)` makes a function a conduit iff callee
+ *     resolves to one — so A→B→C return chains compose across files.
+ *   ★6d return-taint: when the callee resolves to a conduit (taint_returns_q, incl.
+ *     the transitive closure above) in a DIFFERENT file, source the assigned var
+ *     Xnode — the within-file edge from Xnode to its sink is already present, so
+ *     the tainted/2 closure carries it.
  *
  * Resolution mirrors the linker's order: (1) an ES import_binding (resolve the
  * module specifier to a project file, honoring `import { x as y }` aliases), (2)
  * a same-file definition, (3) a project-global UNIQUE definition. An ambiguous
  * name (>1 home, no import) is left unresolved — a false negative, never a
- * cross-file false positive. Same-file resolutions are skipped here — the
- * extractor already handled them.
+ * cross-file false positive. Same-file return-joins are skipped here — the
+ * extractor already handled the direct same-file conduit case.
  */
 import { fact } from '../lift/fact-model.js'
 import { resolveModule } from './linker.js'
@@ -35,6 +40,7 @@ export function linkTaint(facts) {
   const paramSinkByQid = new Map() // qid -> [{ idx, kind, ct }]
   const conduitQids = new Set() // ★6d qid of a tainted-RETURN conduit (taint_returns_q)
   const retCalls = [] // ★6d { file, callee, xnode } — `const x = callee(..)` to a non-local callee
+  const returnCalls = [] // ★6 slice-6 { qfn, callee } — `return callee(..)`; qfn is a transitive conduit iff callee is
   const imports = new Map() // file -> Map(local -> { mod, imported })
 
   for (const { pred, args } of facts) {
@@ -57,6 +63,8 @@ export function linkTaint(facts) {
       conduitQids.add(String(args[0]))
     } else if (pred === 'ret_call') {
       retCalls.push({ file: String(args[0]), callee: String(args[1]), xnode: String(args[2]) })
+    } else if (pred === 'ret_returns_call') {
+      returnCalls.push({ qfn: String(args[0]), callee: String(args[1]) })
     }
   }
 
@@ -90,6 +98,20 @@ export function linkTaint(facts) {
       out.push(fact('sink', site, s.kind))
       if (s.kind === 'xss') out.push(fact('sink_ct', site, s.ct))
       out.push(fact('dataflow', argNode, site))
+    }
+  }
+
+  // ★6 slice-6 transitive-conduit fixpoint: `return callee(..)` makes a function
+  // a conduit IFF callee resolves to one. Iterate to a fixpoint so A→B→C chains
+  // close across files (B is a conduit because it returns C's conduit result).
+  // Monotone (only adds), bounded by |returnCalls|, so it always terminates.
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const { qfn, callee } of returnCalls) {
+      if (conduitQids.has(qfn)) continue
+      const tgt = resolve(qfn.slice(0, qfn.lastIndexOf('::')), callee)
+      if (tgt && conduitQids.has(tgt)) { conduitQids.add(qfn); out.push(fact('taint_returns_q', qfn)); changed = true } // surface the transitive conduit
     }
   }
 

@@ -1,6 +1,6 @@
 # ★6 过程间污点：tainted-summary，把行级启发式升级为 sound 的跨过程流
 
-> 状态：**第一刀 + 第二刀 + 第三刀 + 第四刀 + 第五刀已实现（2026-06-07）**——within-file **tainted-RETURN 摘要**（一）、within-file **param-sink**（二，带 content-type 护栏）、**跨文件 param-sink**（三，QId 摘要 + post-link 解析）、**跨文件 returns-taint**（四，QId conduit 摘要 + ret_call + post-link 注入 source）、**跨文件 2-hop（returns→param-sink）**（五，两个跨文件 join 组合，护栏跨跳成立）。完整 IFDS（传递 conduit 不动点、exploded supergraph 全量 CFL-可达）仍为后续加刀。
+> 状态：**六刀已实现（2026-06-07）**——within-file **tainted-RETURN 摘要**（一）、within-file **param-sink**（二，content-type 护栏）、**跨文件 param-sink**（三，QId 摘要 + post-link 解析）、**跨文件 returns-taint**（四，QId conduit + ret_call + post-link 注入 source）、**跨文件 2-hop（returns→param-sink）**（五，两 join 组合,护栏跨跳）、**传递 conduit A→B→C 跨文件不动点**（六,`ret_returns_call` + conduit 集闭包）。完整 IFDS（文件内传递、return-of-arg、exploded supergraph 全量 CFL-可达）仍为后续加刀。
 > 遵循 [`06-frontier-map.md` §落地约束](./06-frontier-map.md)。数学依据：Reps–Horwitz–Sagiv POPL'95（IFDS = exploded supergraph 上的图可达，多项式）；本档先做 IFDS 的**轻量摘要近似**（function summary）。
 
 ## 一、要解决的问题
@@ -158,11 +158,36 @@ function show(req){ const name = getName(req); render(el, name) }  // 2-hop 真 
 - **真实库实测**（`../src/server/routes`）：**新增 0 误报**（仍 1 条直接 `sink_xss`，87 JSON 抑制不变），事实数 +~0.7%。
 - 回归（实测绿）：sample-project 7、taint 1、taint-interproc 1、taint-paramsink 2、taint-xfile 2、taint-retxfile 2 全不变；`npm test` 通过（9 smoke + **24** engines + MCP 16-工具自检）。
 
-## 十、后续加刀（传递 conduit + exploded supergraph 全量 IFDS）
+## 十、第六刀：传递 conduit（A→B→C 跨文件不动点，已落地 2026-06-07）
 
-within-file 两刀 + cross-file param-sink + cross-file returns-taint + cross-file 2-hop（均含 import 别名解析、content-type 护栏跨跳）已落地。完整 IFDS 仍待：
+第四刀的 conduit 判定在文件内单趟：`summarizeReturns` 只把"`return` 裸污点变量 / 直接 SOURCE"判为 conduit，刻意拒绝 `return f(..)`（返回的是 f 的结果，§三）。但当 `f` **自身是 conduit** 时这条拒绝就漏了——委托/转发函数（getter 的薄封装）跨文件时传递性断链：
 
-- **传递 conduit（A→B→C 跨文件不动点）**：当前 `summarizeReturns` 只在文件内判 conduit；若 `B` 的 conduit 性依赖它 `return C(req)` 而 `C` 是另一文件的 conduit，则需把第四刀 `ret_call` 解析出的 source **喂回 conduit 摘要**并迭代到不动点（A 调 B、B 调 C 的传递污点）。本框架（QId 摘要 + post-link 解析）可增量承载，但需要跨文件迭代而非单趟解析。
-- 最终 **exploded supergraph 上的精确 CFL-可达**（Reps–Horwitz–Sagiv 全量 IFDS）。
+```js
+// source.js  : export function getName(req){ const n=req.query.name; return n }  // 基础 conduit
+// delegate.js: import {getName} from './source.js'
+//              export function fetchName(req){ return getName(req) }              // 传递 conduit（仅因 getName 是）
+// consumer.js: import {fetchName} from './delegate.js'
+//              function show(req){ const name=fetchName(req); el.innerHTML=name }  // A→B→C 真 XSS
+```
 
-按真实规模需要再推进；本框架（两遍摘要 + QId `param_sink`/`taint_returns_q` + `taint_arg`/`ret_call` + 既有 `tainted/2` 闭包 + 调用点/跨文件虚拟汇与 source 注入）可增量承载。
+### 实现（摘要发传递候选 + post-link 不动点闭包）
+- **`summarizeReturns` 改返回 `{ conduits, returnCalls }`**：除直接 conduit 外，遇 `return callee(..)`（`calleeOf` 只认**裸** callee——`db.query(..)` 这类 dotted 不算,天然 sound）收集 `[fn, callee]`。`taint.js` 对每条发 `ret_returns_call('File::Fn', Callee)`。
+- **`taint-link.js` 在 return-join 前跑跨文件不动点**：从直接 conduit 集（`taint_returns_q`）出发,反复对每条 `ret_returns_call(QFn, Callee)` 用**同一个 `resolve()`**（import 别名→同文件→全局唯一）把 Callee 解析到 QId,命中 conduit 集即把 QFn 并入,迭代到不动点（**单调、以 `|returnCalls|` 为界 → 必然终止**；自递归/环若无基础 conduit 则不传播,sound）。新并入的传递 conduit 也发 `taint_returns_q(QFn)` 以便 query/explain 看见。随后第四刀 return-join 用**闭包后的** conduit 集 → A→B→C 链上 consumer 的局部变量被注入 source。
+
+soundness 不变：传递性只在 return 的裸 callee **解析到已证 conduit** 时成立;`return db.query(x)`（dotted,非裸）/`return f(x)`（f 非 conduit）一律不传播。已知限制：consumer 与传递 conduit **同文件**时,第四刀 return-join 跳过 same-file（留待 within-file 摘要内做不动点）——文件内委托的漏报,非误报。
+
+### 验证（已落地）
+- 夹具 `examples/taint-transitive/`（三文件 A→B→C）：`source.js::getName`(基础)→`delegate.js::fetchName`(传递,`return getName(req)`)→`consumer.js::show`。`taint_returns_q` 经不动点含 `getName`+`fetchName` 两条;`violation` 恰 1（`consumer.js:10`,两跳之外的汇）。
+- 测试 `test/engines.test.js` ★6 slice-6：断言 conduit 集含传递 `fetchName`、违规恰 1。
+- **真实库实测**（`../src/server/routes`）：**新增 0 误报**（仍 1 条直接 `sink_xss`），事实数仅 +~35。
+- 回归（实测绿）：sample-project 7、taint 1、taint-interproc 1、taint-paramsink 2、taint-xfile 2、taint-retxfile 2、taint-2hop 1 全不变；`npm test` 通过（9 smoke + **25** engines + MCP 16-工具自检）。
+
+## 十一、后续加刀（exploded supergraph 全量 IFDS）
+
+within-file 两刀 + cross-file param-sink + cross-file returns-taint + cross-file 2-hop + 传递 conduit 不动点（均含 import 别名解析、content-type 护栏跨跳）已落地。完整 IFDS 仍待：
+
+- **文件内传递 conduit**：当前不动点只闭包跨文件 conduit 集;consumer 与传递 conduit 同文件的链仍漏（第四刀 same-file 跳过）——需在 within-file 摘要内也跑一次 conduit 不动点。
+- **返回-of-tainted-arg**：`function id(x){return x}` 这类**透传形参**的返回（`return x` 当 x 是形参）——区别于"内部制造污点"的 conduit,是 param→return 摘要,可与 param-sink 摘要合流。
+- 最终 **exploded supergraph 上的精确 CFL-可达**（Reps–Horwitz–Sagiv 全量 IFDS），把 conduit/param-sink/return 三类摘要统一成 supergraph 上的 realizable-path 可达。
+
+按真实规模需要再推进；本框架（两遍摘要 + QId `param_sink`/`taint_returns_q` + `taint_arg`/`ret_call`/`ret_returns_call` + 既有 `tainted/2` 闭包 + 调用点/跨文件虚拟汇、source 注入与传递不动点）可增量承载。

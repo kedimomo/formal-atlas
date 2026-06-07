@@ -18,6 +18,9 @@
  *   ret_call(File, Callee, Xnode)    (★6d: `const x = callee(..)` to a non-local callee —
  *                                           the post-link join sources Xnode iff Callee
  *                                           resolves to a tainted-RETURN conduit elsewhere)
+ *   ret_returns_call('File::Fn', Callee)   (★6 slice-6: `return callee(..)` — Fn is a
+ *                                           transitive conduit iff Callee is, via the
+ *                                           cross-file fixpoint in taint-link.js)
  * ★6 interprocedural steps (sound-leaning, always-on — they add true positives
  * without reintroducing the ★3 false XSS, see docs/10):
  *   a) `const x = helper(..)` where `helper` returns untrusted data taints `x`.
@@ -58,10 +61,11 @@ export function extractTaintJs(fileId, code) {
   const facts = []
   const taint = new Map() // varName -> node id (currently tainted)
   const retTaint = new Map() // ★6d varName -> node id (assigned a non-local call result; sourced cross-file)
-  const returnsTaint = summarizeReturns(code) // ★6a: functions that return untrusted data
+  const { conduits: returnsTaint, returnCalls } = summarizeReturns(code) // ★6a + slice-6: conduits + transitive return-calls
   const paramSinks = summarizeParamSinks(code) // ★6b: fn -> [{idx, kind, ct}] reaching a sink
   const localFns = localFnNames(code) // ★6d: functions defined here (gate ret_call to non-local callees)
   for (const fn of returnsTaint) { facts.push(fact('taint_returns', fn)); facts.push(fact('taint_returns_q', `${fileId}::${fn}`)) }
+  for (const [fn, callee] of returnCalls) facts.push(fact('ret_returns_call', `${fileId}::${fn}`, callee)) // ★6 slice-6: transitive conduit, resolved post-link
   for (const [fn, list] of paramSinks) for (const { idx, kind, ct } of list) facts.push(fact('param_sink', `${fileId}::${fn}`, idx, kind, ct))
 
   code.split('\n').forEach((raw, i) => {

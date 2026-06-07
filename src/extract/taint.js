@@ -9,6 +9,7 @@
  *
  * Emits for rules/taint.pl:
  *   source(Id) · sink(Id, Kind) · sanitizer(Id) · dataflow(A, B)   (Id='file:line:tag')
+ *   sink_ct(Id, json|html|unknown)   (★3: content-type refinement for xss sinks)
  * Coarse on purpose (intra-file, name-based); the symbolic rules give the verdict.
  */
 import { fact } from '../lift/fact-model.js'
@@ -26,6 +27,28 @@ const FN_DEF = /(?:^|\s)(?:async\s+)?function\b|=\s*(?:async\s*)?(?:\([^)]*\)|\w
 const idOf = (file, line, tag) => `${file}:${line}:${tag}`
 const noStr = (s) => s.replace(/'[^']*'|"[^"]*"|`[^`]*`/g, "''")
 const mentions = (expr, name) => new RegExp(`\\b${name}\\b`).test(expr)
+
+// Explicit HTML-response signals at a sink site (Express/Fastify): an html
+// content-type, a template render, or a redirect (reflected open-redirect).
+const HTML_HINT = /\.type\s*\(\s*['"`][^'"`]*html|\.(?:render|redirect)\s*\(|content-?type['"`]?\s*[:=,]\s*['"`][^'"`]*html/i
+
+/**
+ * Structurally classify the response content-type of an xss-kind sink, so the
+ * symbolic rule can suppress provably-JSON responses (Fastify `reply.send(obj)`
+ * serializes to JSON — NOT an HTML/script sink). SOUND-leaning: we return
+ * `json` ONLY when we can argue it; anything ambiguous stays `unknown` (kept).
+ * Operates on the RAW line (string literals intact) so markup args are visible.
+ */
+function classifyXssCt(line) {
+  if (/\.innerHTML\s*=/.test(line)) return 'html'
+  if (HTML_HINT.test(line)) return 'html'
+  const m = line.match(/\.(?:send|write|end)\s*\(\s*([\s\S]*)$/)
+  const arg = (m ? m[1] : '').trim()
+  if (/^['"`]/.test(arg)) return /</.test(arg) ? 'html' : 'unknown' // string arg: markup ⇒ html
+  if (arg.startsWith('{') || arg.startsWith('[') || /^JSON\b/.test(arg)) return 'json' // object/array/JSON.*
+  if (/\b(?:reply|rep)\b\s*\.|\.json\s*\(/.test(line)) return 'json' // Fastify reply.* (incl. chained .code().send()) ⇒ JSON
+  return 'unknown' // e.g. Express res.send(identifier): genuinely ambiguous
+}
 
 export function extractTaintJs(fileId, code) {
   const facts = []
@@ -60,6 +83,7 @@ export function extractTaintJs(fileId, code) {
       if (!re.test(code2)) continue
       const sinkId = idOf(fileId, ln, `sink_${kind}`)
       facts.push(fact('sink', sinkId, kind))
+      if (kind === 'xss') facts.push(fact('sink_ct', sinkId, classifyXssCt(line))) // ★3: content-type refinement
       const tv = [...taint].find(([v]) => mentions(code2, v))
       if (tv) facts.push(fact('dataflow', tv[1], sinkId))
       else if (SOURCE.test(code2)) {

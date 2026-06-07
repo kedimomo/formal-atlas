@@ -131,6 +131,16 @@ export const TOOLS = [
       required: ['path'],
     },
   },
+  {
+    name: 'explain',
+    description: 'Explain WHY a violation fired: the derivation / proof tree (untrusted source → dataflow chain → sink, or the Z3 counterexample behind a refinement violation). Use after `verify`/`taint` to see the evidence for a finding or to judge a false positive. Triggers when user asks: "why is this flagged?", "explain this violation", "show the proof/derivation", "为什么报这个?", "解释这个告警", "给出推导".',
+    inputSchema: { type: 'object', properties: { ...P, rule: { type: 'string', description: 'Filter to one rule id (e.g. taint-reaches-sink)' }, subject: { type: 'string', description: 'Filter to one violation subject (file:line:tag)' } }, required: ['path'] },
+  },
+  {
+    name: 'repair',
+    description: '★3 closed-loop repair: for each violation, hand the LLM the proof tree + Z3 counterexample, get a triage verdict or a patch, then RE-VERIFY and accept ONLY if the violation clears with no regression (generate-and-check — the LLM proposes, the solver disposes). Dry-run by default; apply=true writes accepted patches to disk. With no LLM configured, returns the structured repair prompt per finding (status `needs-llm`). Triggers when user asks: "fix these violations", "auto-repair", "triage the findings", "自动修复", "闭环修复", "把误报消掉".',
+    inputSchema: { type: 'object', properties: { ...P, apply: { type: 'boolean', description: 'Write accepted patches to disk (default false = dry run)' }, online: { type: 'boolean', description: 'Hint the LLM layer to use the online provider' }, max: { type: 'number', description: 'Max violations to process (default 20)' } }, required: ['path'] },
+  },
 ]
 
 export async function runTool(name, a = {}, onProgress) {
@@ -316,6 +326,18 @@ export async function runTool(name, a = {}, onProgress) {
           hint: 'Call fdrs-mcp rules/evolve(phase=diagnose) with the signalFile above to start the FDRS closed loop.',
         },
       })
+    }
+    case 'explain': {
+      const { program } = await programFor(a.path, onProgress)
+      const { explainAll } = await import('../src/verify/explain.js')
+      if (onProgress) onProgress('building derivation traces...')
+      const expls = await explainAll(program, { rule: a.rule, subject: a.subject })
+      return j({ count: expls.length, explanations: expls.slice(0, 100) })
+    }
+    case 'repair': {
+      const { repairViolations } = await import('../src/repair/loop.js')
+      if (onProgress) onProgress('running closed-loop repair (LLM → re-verify)...')
+      return j(await repairViolations(a.path, { online: !!a.online, apply: !!a.apply, max: a.max || 20 }))
     }
     default:
       throw new Error(`unknown tool: ${name}`)

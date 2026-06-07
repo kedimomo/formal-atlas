@@ -21,6 +21,8 @@ Usage:
   formal-atlas query   <path> "<goal>." [--lift=...]
   formal-atlas lift    <path>            (extract + online AI lift)
   formal-atlas refine  <path> [--online] (lift decidable refinements, Z3-check φ_pre ⇒ φ_post)
+  formal-atlas explain <path> [--rule=R] [--subject=S]   (derivation/proof tree per violation)
+  formal-atlas repair  <path> [--online] [--apply]       (★3 closed loop: LLM patch → re-verify)
   formal-atlas smt     refinement|contract|policy|dafny <spec.json>
   formal-atlas watch   <path>            (monitor changes, auto-verify)
 
@@ -31,7 +33,8 @@ Examples:
   formal-atlas query  examples/sample-project "impact(validateUser, Caller)."
   formal-atlas refine examples/sample-project
   formal-atlas smt    refinement examples/refinement/bank.refine.json
-  formal-atlas watch  <path>            (monitor changes, auto-verify)
+  formal-atlas explain examples/repair
+  formal-atlas repair  examples/repair
 `
 
 function parseFlags(args) {
@@ -124,9 +127,12 @@ async function main() {
 
   if (cmd === 'verify') {
     const proj = await extractProject(target, { lift })
-    const rows = await runQuery(buildProgram(proj), 'violation(Subject, Rule).')
+    const program = buildProgram(proj)
+    const rows = await runQuery(program, 'violation(Subject, Rule).')
     console.error(`# verify ${target} — ${proj.fileCount} files, ${proj.facts.length} facts ${JSON.stringify(proj.methods)}`)
     console.log(reportViolations(rows))
+    const suppressed = await runQuery(program, 'suppressed_xss(N).')
+    if (suppressed.length) console.log(`\nℹ  ${suppressed.length} xss false-positive(s) auto-suppressed as JSON responses (★3 content-type refinement).`)
     return
   }
 
@@ -138,6 +144,22 @@ async function main() {
     const rows = await runQuery(buildProgram(proj), g)
     console.error(`# query over ${proj.facts.length} facts: ${g}`)
     console.log(reportQuery(rows, g))
+    return
+  }
+
+  if (cmd === 'explain') {
+    const { explainAll, formatExplanation } = await import('./verify/explain.js')
+    const proj = await extractProject(target, { lift })
+    const expls = await explainAll(buildProgram(proj), { rule: flags.rule, subject: flags.subject })
+    console.error(`# explain ${target} — ${proj.fileCount} files, ${expls.length} violation(s)`)
+    if (!expls.length) { console.log('✅  No violations to explain.'); return }
+    for (const e of expls) console.log('\n' + formatExplanation(e))
+    return
+  }
+
+  if (cmd === 'repair') {
+    const { repairViolations, formatRepair } = await import('./repair/loop.js')
+    console.log(formatRepair(await repairViolations(target, { online: !!flags.online, apply: !!flags.apply })))
     return
   }
 

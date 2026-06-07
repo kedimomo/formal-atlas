@@ -14,6 +14,7 @@
 :- dynamic(sink/2).
 :- dynamic(sanitizer/1).
 :- dynamic(dataflow/2).
+:- dynamic(sink_ct/2).
 
 % A node is tainted if it is a source, or untrusted data flows into it.
 tainted(N) :- tainted_(N, [N]).
@@ -23,11 +24,36 @@ tainted_(N, Visited) :-
     \+ member(M, Visited),
     tainted_(M, [M|Visited]).
 
+% Witness flow: the source and the dataflow chain Source → ... → Sink that
+% taints N (cycle-safe via the Visited accumulator). Used by the ★3 explainer
+% to expose WHY a sink is tainted, not just THAT it is.
+tainted_path(N, Source, Path) :- tainted_path_(N, [N], Source, [N], Path).
+tainted_path_(N, _, N, Acc, Acc) :- source(N).
+tainted_path_(N, Visited, Source, Acc, Path) :-
+    dataflow(M, N),
+    \+ member(M, Visited),
+    tainted_path_(M, [M|Visited], Source, [M|Acc], Path).
+
 % A node is sanitized if a sanitizer sits directly upstream of it.
 sanitized_into(N) :- dataflow(S, N), sanitizer(S).
 
-% VIOLATION: untrusted data reaches a sink and was not sanitized.
+% ★3 content-type refinement: an xss sink whose response body is JSON-serialized
+% (Fastify `reply.send(obj)` → application/json) is NOT an HTML/script sink — the
+% framework escapes it. Only a PROVABLY-json content-type suppresses; `html` and
+% `unknown` stay flagged (we suppress only what we can argue). When no sink_ct/2
+% facts exist (extractor older / pass off), html_safe never holds ⇒ behavior is
+% bit-identical to before (upgrade/rollback-safe).
+html_safe(N) :- sink(N, xss), sink_ct(N, json).
+
+% VIOLATION: untrusted data reaches a sink, was not sanitized, and the sink is
+% not a provably-JSON response.
 violation(N, 'taint-reaches-sink') :-
     sink(N, _),
     tainted(N),
-    \+ sanitized_into(N).
+    \+ sanitized_into(N),
+    \+ html_safe(N).
+
+% Auditing: xss sinks that WOULD have fired but are suppressed as JSON responses
+% (★3 content-type refinement). Lets `verify` report the FP-suppression count.
+suppressed_xss(N) :-
+    sink(N, xss), tainted(N), \+ sanitized_into(N), sink_ct(N, json).

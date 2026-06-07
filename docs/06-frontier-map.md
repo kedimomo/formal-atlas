@@ -38,7 +38,7 @@
 |---|---|---|---|---|---|---|
 | **★1** | **数学深化(本批文档)** | 数学 | 把 `05` 的 §8–§14 落地成文档:算术分层、描述复杂度、λ-立方体、精化类型档、完备性、忠实度、HoTT | 纯文档 | 低 | `05` 全文 |
 | **★2 ✅** | **精化类型层(已完成 2026-06-07)** | 严谨 | 已新增 `refinement(R, Var, φ, pre\|post)` 事实 + z3 判定 `φ_pre ⇒ φ_post`,四档裁决(entailed/broken+反例/vacuous/unchecked);CLI `refine`+`smt refinement`、MCP `refine` 工具、6 测试。见 [`07-refinement-layer.md`](./07-refinement-layer.md) | **已集成 z3**、`smt-dsl.js`、`smt-bridge.checkContract`(零重写复用) | 中 | `05 §11`(Liquid Types)、`05 §10`(λ-立方体可判定角) |
-| **★3** | **反例驱动修复 + 证明树解释** | 闭环 | violation/UNSAT → 结构化反馈 → LLM 提补丁 → 再校验;暴露 tau-prolog **推导轨迹**(哪些子句触发)喂回人/LLM。**★2 已产出 z3 反例,正是闭环的输入** | tau-prolog、z3、`llm/`、★2 的 `broken` 反例 | 中 | `05 §13`(证伪式闭环)、Chiasmus derivation-trace |
+| **★3 ✅** | **反例驱动修复 + 证明树解释（已完成 2026-06-07）** | 闭环 | 已新增 `src/verify/explain.js`（证明树：污点 `tainted_path/3` 给源→汇链、refinement 拎 z3 反例）+ `src/repair/{feedback,loop}.js`（LLM 候选 → 应用到临时副本 → 重抽取重校验 → 计数下降且无回归才接受；离线诚实降级 `needs-llm`）。先决可判定分诊：`sink_ct/2` 内容类型精化压掉 ~92 假 XSS。CLI `explain`/`repair`、MCP 第 14/15 工具、4 测试。见 [`08-closed-loop.md`](./08-closed-loop.md) | tau-prolog、z3、`llm/`、★2 的 `broken` 反例 | 中 | `05 §13`(证伪式闭环)、Chiasmus derivation-trace |
 | **★4** | **规约忠实度评测** | 严谨/闭环 | 仿 Verus-SpecGym:用"接受合法/拒绝非法"可执行样例给 LLM 的 `contract/refinement` 打忠实分 + 回译 round-trip | `examples/`、`formalize/` | 中 | `05 §13`(忠实度无法证明、只能证伪) |
 | 5 | **Soufflé / 增量 Datalog** | 规模 | 大库走 Soufflé(Datalog→并行 C++);watch 模式上增量维护(Differential Dataflow / DDlog / DRed) | 事实库、`watch.js`、`cache.js` | 中高 | `05 §9`(PTIME 数据复杂度);增量 = 最小不动点的 IVM |
 | 6 | **IFDS/CFL-可达 污点** | 规模 | 行级污点 → sound 过程间:IFDS = 在 exploded supergraph 上的图可达(多项式) | `extract/taint.js`、`taint.pl` | 中高 | Reps–Horwitz–Sagiv POPL'95;CFL-reachability |
@@ -46,7 +46,7 @@
 | 8 | **全 ITP 放电** | 严谨(地平线) | 接 Dafny/Verus/Lean CLI **真正放电**证明义务(= Logos territory;最严、最贵、需外部工具链) | `contract/3`、Dafny 骨架 | 高 | `05 §10`(λC 顶点) |
 
 ### 推荐主线
-**★1(本批文档已写)→ ★2 精化类型(✅ 已完成 2026-06-07,见 `07-refinement-layer.md`)→ ★3 闭环修复 + 证明树(让系统会"解释"和"自愈"——★2 产出的 z3 反例正是它的输入)→ ★4 忠实度评测(让 LLM 侧可信)。**
+**★1(本批文档已写)→ ★2 精化类型(✅ 已完成 2026-06-07,见 `07-refinement-layer.md`)→ ★3 闭环修复 + 证明树(✅ 已完成 2026-06-07,见 `08-closed-loop.md`——★2 产出的 z3 反例正是它的输入)→ ★4 忠实度评测(让 LLM 侧可信,当前推荐主线)。**
 5–8 按**真实规模 / 严谨度需求**按需启动,不预先铺开——遵循 `04-roadmap` 的"可判定优先、便宜够用就停、升级-回滚安全"三条取舍主线。
 
 ### 为什么是这个顺序

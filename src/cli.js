@@ -23,7 +23,7 @@ Usage:
   formal-atlas refine  <path> [--online] (lift decidable refinements, Z3-check φ_pre ⇒ φ_post)
   formal-atlas explain <path> [--rule=R] [--subject=S]   (derivation/proof tree per violation)
   formal-atlas repair  <path> [--online] [--apply]       (★3 closed loop: LLM patch → re-verify)
-  formal-atlas smt     refinement|contract|policy|dafny <spec.json>
+  formal-atlas smt     refinement|contract|policy|dafny|faithfulness <spec.json>
   formal-atlas watch   <path>            (monitor changes, auto-verify)
 
 Examples:
@@ -61,7 +61,7 @@ async function main() {
   if (cmd === 'smt') {
     const sub = positional[0]
     const file = positional[1]
-    if (!sub || !file) { console.error('usage: formal-atlas smt policy|contract|dafny|refinement <spec.json>'); process.exit(2) }
+    if (!sub || !file) { console.error('usage: formal-atlas smt policy|contract|dafny|refinement|faithfulness <spec.json>'); process.exit(2) }
     const spec = JSON.parse(fs.readFileSync(file, 'utf8'))
     const { checkContract, checkPolicy, toDafny } = await import('./verify/smt-bridge.js')
     if (sub === 'dafny') { console.log(toDafny(spec)); process.exit(0) }
@@ -78,6 +78,19 @@ async function main() {
       }
       const bad = results.filter((r) => r.status === 'broken' || r.status === 'vacuous').length
       console.log(`\n${results.length} refinement specs — ${bad} unsound (broken/vacuous), machine-checked by Z3.`)
+      process.exit(0)
+    }
+    if (sub === 'faithfulness') {
+      const { scoreFaithfulness, equiv, conjoin } = await import('./verify/faithfulness.js')
+      const r = scoreFaithfulness(spec, spec.samples || [])
+      const pct = (x) => `${Math.round(x * 100)}%`
+      console.log(`${r.faithful ? '✅' : '❌'} ${r.name}: ${r.mode}  (score ${pct(r.score)}, recall ${pct(r.recall)}, specificity ${pct(r.specificity)}, ${r.total} samples)`)
+      if (r.overAccepted.length) console.log(`   ✗ accepts ${r.overAccepted.length} ILLEGAL sample(s) — spec too weak, e.g. ${JSON.stringify(r.overAccepted[0])}`)
+      if (r.overRejected.length) console.log(`   ✗ rejects ${r.overRejected.length} LEGAL sample(s) — spec too strong, e.g. ${JSON.stringify(r.overRejected[0])}`)
+      if (spec.equivalent) {
+        const e = await equiv(spec.vars || {}, conjoin(spec), spec.equivalent)
+        console.log(`   round-trip vs "${spec.equivalent}": ${e.equivalent ? '✅ equivalent' : `❌ drifted${e.counterexample ? ' — ' + e.counterexample : ''}`}`)
+      }
       process.exit(0)
     }
     if (sub === 'contract') {

@@ -141,6 +141,11 @@ export const TOOLS = [
     description: '★3 closed-loop repair: for each violation, hand the LLM the proof tree + Z3 counterexample, get a triage verdict or a patch, then RE-VERIFY and accept ONLY if the violation clears with no regression (generate-and-check — the LLM proposes, the solver disposes). Dry-run by default; apply=true writes accepted patches to disk. With no LLM configured, returns the structured repair prompt per finding (status `needs-llm`). Triggers when user asks: "fix these violations", "auto-repair", "triage the findings", "自动修复", "闭环修复", "把误报消掉".',
     inputSchema: { type: 'object', properties: { ...P, apply: { type: 'boolean', description: 'Write accepted patches to disk (default false = dry run)' }, online: { type: 'boolean', description: 'Hint the LLM layer to use the online provider' }, max: { type: 'number', description: 'Max violations to process (default 20)' } }, required: ['path'] },
   },
+  {
+    name: 'faithfulness',
+    description: 'Spec-faithfulness eval (★4): score a contract/refinement against labeled accept-legal / reject-illegal samples — DECIDABLY (QF-LIA, no LLM, no solver in the grading loop). Flags `too-weak` (accepts an ILLEGAL sample — a vacuous/`true` spec) and `too-strong` (rejects a LEGAL one). Pass {vars, pre[], post[], samples:[{label:"legal"|"illegal", point:{var:val}}]}. Catches a ★3 closed loop that would self-certify a WRONG spec. Triggers when user asks: "is this spec faithful?", "grade the contract", "does the spec accept good / reject bad inputs?", "规约忠实吗", "给契约打忠实分".',
+    inputSchema: { type: 'object', properties: { name: { type: 'string' }, vars: { type: 'object' }, pre: { type: 'array', items: { type: 'string' } }, post: { type: 'array', items: { type: 'string' } }, samples: { type: 'array', description: '[{label:"legal"|"illegal", point:{var:number|bool}}]' } }, required: ['samples'] },
+  },
 ]
 
 export async function runTool(name, a = {}, onProgress) {
@@ -338,6 +343,10 @@ export async function runTool(name, a = {}, onProgress) {
       const { repairViolations } = await import('../src/repair/loop.js')
       if (onProgress) onProgress('running closed-loop repair (LLM → re-verify)...')
       return j(await repairViolations(a.path, { online: !!a.online, apply: !!a.apply, max: a.max || 20 }))
+    }
+    case 'faithfulness': {
+      const { scoreFaithfulness } = await import('../src/verify/faithfulness.js')
+      return j(scoreFaithfulness({ name: a.name, vars: a.vars, pre: a.pre, post: a.post }, a.samples || []))
     }
     default:
       throw new Error(`unknown tool: ${name}`)

@@ -27,7 +27,7 @@
 - [ ] **时序性质**：把调用图/状态机喂给 **TLA⁺ / 模型检查**（对接仓库 `formal/ReBAC_SPV.tla`）。
 
 ## Phase 3 — 神经符号闭环（autoformalization 做忠实）
-- [ ] **spec faithfulness 评测**：仿 **Verus-SpecGym**，用"接受合法/拒绝非法"的可执行样例给 LLM 产出的 `contract/3` 打忠实度分。（= ★4，下一档）
+- [x] **spec faithfulness 评测（★4，2026-06-07）**：`src/verify/faithfulness.js` 用"接受合法/拒绝非法"的带标签可执行样例给 `contract`/`refinement` 打忠实分——`scoreFaithfulness` 在具体点上 `evalExpr`（QF-LIA，**可判定、零 LLM、零求解器**），逮 `too-weak`（接受 illegal，空泛规约）/`too-strong`（拒绝 legal）；`equiv` 复用 `checkContract` 双向判定，撑起 `roundTrip`（LLM 复述→再形式化→z3 判等价，离线 `needs-llm`）。CLI `smt faithfulness`、MCP `faithfulness`（第 16 工具）、5 测试。见 [`09-faithfulness.md`](./09-faithfulness.md)。
 - [x] **推导轨迹解释（★3，2026-06-07）**：`src/verify/explain.js` 把 `violation/2` 还原成结构化证明树——污点用 `tainted_path/3` 给出 **源→数据流链→汇**，refinement 拎出 ★2 的 z3 反例。CLI `explain`、MCP `explain` 工具。见 [`08-closed-loop.md`](./08-closed-loop.md)。
 - [x] **反例驱动修复（★3，2026-06-07）**：`src/repair/{feedback,loop}.js` 把证明树+反例喂回 LLM（`callLLMText`），候选补丁**应用到临时副本→重抽取→重校验**，目标规则计数下降且无回归才接受（generate-and-check）；离线诚实降级为 `needs-llm`。先决的**可判定分诊**：污点汇内容类型精化 `sink_ct/2`（Fastify `reply.send(obj)`=JSON ⇒ 非 HTML 汇），结构化压掉任务①的 ~92 假 XSS。CLI `repair`、MCP `repair` 工具（共 15 工具）。
 

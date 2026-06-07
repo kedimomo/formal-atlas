@@ -14,6 +14,8 @@ import { checkRefinementsVerbose, checkRefinementFacts } from '../src/verify/ref
 import { runQuery } from '../src/verify/prolog-engine.js'
 import { explainAll } from '../src/verify/explain.js'
 import { repairViolations, verifyPatch } from '../src/repair/loop.js'
+import { scoreFaithfulness, equiv } from '../src/verify/faithfulness.js'
+import { parseExpr, evalExpr } from '../src/verify/smt-dsl.js'
 
 const ref = (routine, v, phi, kind) => ({ pred: 'refinement', args: [routine, v, phi, kind] })
 
@@ -129,4 +131,48 @@ test('★3 repair offline: honest boundary — needs-llm with a structured promp
   } else {
     assert.ok(run.results.every((r) => ['applied', 'verified', 'rejected', 'false-positive', 'needs-llm'].includes(r.status)))
   }
+})
+
+// ===================== ★4 spec-faithfulness evaluation =====================
+
+const ABS_SAMPLES = [
+  { label: 'legal', point: { x: 5, ret: 5 } },
+  { label: 'legal', point: { x: -7, ret: 7 } },
+  { label: 'illegal', point: { x: 5, ret: -5 } },
+  { label: 'illegal', point: { x: 5, ret: 4 } },
+]
+
+test('★4 evalExpr: concrete QF-LIA evaluation (arith, unary minus, implication)', () => {
+  assert.equal(evalExpr(parseExpr('ret == x || ret == -x'), { x: -7, ret: 7 }), true)
+  assert.equal(evalExpr(parseExpr('x >= 0 -> ret == x'), { x: -3, ret: 99 }), true) // vacuously true
+  assert.equal(evalExpr(parseExpr('(a + b) * 2 > 10'), { a: 3, b: 4 }), true)
+})
+
+test('★4 faithfulness: a correct abs spec accepts legal + rejects illegal', () => {
+  const r = scoreFaithfulness({ name: 'abs', post: ['ret >= 0', 'ret == x || ret == -x'] }, ABS_SAMPLES)
+  assert.equal(r.faithful, true)
+  assert.equal(r.recall, 1)
+  assert.equal(r.specificity, 1)
+})
+
+test('★4 faithfulness: a vacuous post is flagged too-weak (accepts an illegal sample)', () => {
+  const r = scoreFaithfulness({ post: ['ret >= 0'] }, ABS_SAMPLES)
+  assert.equal(r.mode, 'too-weak')
+  assert.ok(r.overAccepted.some((p) => p.x === 5 && p.ret === 4), 'abs(5)=4 wrongly accepted')
+  assert.ok(r.specificity < 1)
+})
+
+test('★4 faithfulness: an over-constrained post is flagged too-strong (rejects a legal sample)', () => {
+  const r = scoreFaithfulness({ post: ['ret >= 0', 'ret == x'] }, ABS_SAMPLES)
+  assert.equal(r.mode, 'too-strong')
+  assert.ok(r.overRejected.some((p) => p.x === -7), 'abs(-7)=7 wrongly rejected')
+})
+
+test('★4 round-trip: Z3 equivalence (equivalent ↔, else a counterexample)', async () => {
+  const vars = { x: 'int', ret: 'int' }
+  const eq = await equiv(vars, '(ret >= 0) && (ret == x || ret == -x)', '(ret >= 0) && (x >= 0 -> ret == x) && (x < 0 -> ret == -x)')
+  assert.equal(eq.equivalent, true)
+  const neq = await equiv(vars, 'ret == x', 'ret >= x')
+  assert.equal(neq.equivalent, false)
+  assert.ok(neq.counterexample, 'inequivalence yields a witness')
 })

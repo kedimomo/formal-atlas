@@ -89,3 +89,45 @@ export function compile(ast, Z3, vars) {
     default: throw new Error('bad ast')
   }
 }
+
+/**
+ * Evaluate a parsed expression at a CONCRETE environment (var → int|bool).
+ * Pure, decidable, solver-free — the engine for ★4 faithfulness scoring, which
+ * runs a generated predicate over labeled sample points. Integer `/` truncates
+ * toward zero to mirror evaluation on machine integers.
+ */
+export function evalExpr(ast, env) {
+  switch (ast.t) {
+    case 'num': return ast.v
+    case 'bool': return ast.v
+    case 'var':
+      if (!(ast.v in env)) throw new Error(`unbound variable: ${ast.v}`)
+      return env[ast.v]
+    case 'un': {
+      const e = evalExpr(ast.e, env)
+      return ast.op === '!' ? !e : -e
+    }
+    case 'bin': {
+      const l = evalExpr(ast.l, env)
+      const r = evalExpr(ast.r, env)
+      switch (ast.op) {
+        case '+': return l + r
+        case '-': return l - r
+        case '*': return l * r
+        case '/': return Math.trunc(l / r)
+        case '%': return l % r
+        case '>': return l > r
+        case '>=': return l >= r
+        case '<': return l < r
+        case '<=': return l <= r
+        case '==': return l === r
+        case '!=': return l !== r
+        case '&&': return Boolean(l) && Boolean(r)
+        case '||': return Boolean(l) || Boolean(r)
+        case '->': return !l || Boolean(r)
+        default: throw new Error(`unsupported op ${ast.op}`)
+      }
+    }
+    default: throw new Error('bad ast')
+  }
+}

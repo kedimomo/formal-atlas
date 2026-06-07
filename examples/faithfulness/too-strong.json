@@ -1,0 +1,15 @@
+{
+  "_comment": "Over-constrained: demands ret==x, which is wrong for negative x. It REJECTS the legal sample abs(-7)=7 — a too-strong spec.",
+  "name": "abs-too-strong",
+  "vars": { "x": "int", "ret": "int" },
+  "pre": [],
+  "post": ["ret >= 0", "ret == x"],
+  "samples": [
+    { "label": "legal",   "point": { "x": 5,  "ret": 5 } },
+    { "label": "legal",   "point": { "x": -7, "ret": 7 } },
+    { "label": "legal",   "point": { "x": 0,  "ret": 0 } },
+    { "label": "illegal", "point": { "x": 5,  "ret": -5 } },
+    { "label": "illegal", "point": { "x": 5,  "ret": 4 } },
+    { "label": "illegal", "point": { "x": -7, "ret": 7000 } }
+  ]
+}

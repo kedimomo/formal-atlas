@@ -1,0 +1,15 @@
+{
+  "_comment": "Same intent as abs.faithful, but the post drops |x| and only asks ret>=0. It ACCEPTS illegal samples (e.g. abs(5)=4) — a too-weak / vacuous-leaning spec.",
+  "name": "abs-too-weak",
+  "vars": { "x": "int", "ret": "int" },
+  "pre": [],
+  "post": ["ret >= 0"],
+  "samples": [
+    { "label": "legal",   "point": { "x": 5,  "ret": 5 } },
+    { "label": "legal",   "point": { "x": -7, "ret": 7 } },
+    { "label": "legal",   "point": { "x": 0,  "ret": 0 } },
+    { "label": "illegal", "point": { "x": 5,  "ret": -5 } },
+    { "label": "illegal", "point": { "x": 5,  "ret": 4 } },
+    { "label": "illegal", "point": { "x": -7, "ret": 7000 } }
+  ]
+}

@@ -77,7 +77,8 @@
 
 ## 八、落地清单（下一增量）
 1. ✅ **`src/verify/datalog.js`**（已实现 2026-06-07）：半朴素 TC（`transitiveClosure`/`reachableFrom`）+ stratified 否定 + 首参索引；`evaluate(facts)` 一趟物化 `reaches`/`cyclic`/`deadCode`/`tainted`/`rReaches`。
-2. ☐ `pipeline.js`/`prolog-engine.js`：`--engine=datalog` 时先半朴素物化 → 旁路递归规则 → tau-prolog 收尾 `violation/2`（下一增量）。
+2. ✅ **`pipeline.js` + `cli.js` 集成**（已落地 2026-06-07）：`--engine=datalog` 时 `extractProject` 调 `materialize(facts)` 注入 `engine_materialized` + `dead_code/2`、`tainted/1` ground facts；`resolved.pl` 的 `dead_code` 与 `taint.pl` 的 `tainted` 规则加 `\+ engine_materialized` 守卫(默认无此 fact ⇒ inert ⇒ 行为 bit-identical;实测全夹具 violation 数与默认一致)。`violation/2` 用物化 facts 收尾。
+   **诚实实测**(`store/services`,lift:none 隔离):`violation/2` solve **6378ms → 4296ms(~1.5×)**,parity 294=294。**只 1.5× 不是 1238×**——因 violation/2 成本分散在多条规则,`dead_code`+`tainted` 在其中仅 ~2s(它们各 5s 是**独立全量查询**的代价,非 violation 路径内)。且 CLI 默认 `lift=offline`,离线 AI-lifter 那 ~5s 对两引擎相同、**掩盖**了 solve 加速(verify 总墙钟 12.4s 两者持平;lift:none 时端到端 7.5s→4.5s)。**引擎的 1238× 杀手锏在独立闭包查询**(`cyclic`/`reaches`/`impact`),见 item 5。
 3. ✅ **parity 测试**（`test/engines.test.js` ★5）：sample-project + taint-xfile 上 `reaches/cyclic/dead_code/tainted` 两引擎结果集 `deepEqual`。
 4. ✅ **真实库实测**（`../src/store/services`，145 文件 / 16978 事实）：
 
@@ -87,4 +88,5 @@
    | `dead_code` | 5 859 ms | （同上 33 ms） | ✅ 160=160 | 178× |
    | `tainted` | 3 631 ms | （同上 33 ms） | ✅ 1=1 | 110× |
 
-   引擎一次 `evaluate` 即 33 ms 算完全部闭包,且与 tau-prolog **逐位一致**。论点证实:零安装半朴素**又对又快**,无需 Soufflé。下一增量是把它接进 `violation/2` 热路径(物化 + 旁路递归规则)。
+   引擎一次 `evaluate` 即 33 ms 算完全部闭包,且与 tau-prolog **逐位一致**。论点证实:零安装半朴素**又对又快**,无需 Soufflé。
+5. ☐ **闭包查询路由（下一增量,1238× 的落地处）**：把 `query`/MCP 的纯闭包谓词（`cyclic`/`reaches`/`dead_code`/`tainted`/`impact`）在 `--engine=datalog` 时直接由引擎应答（绕开 tau-prolog），把 `cyclic` 52s→33ms 这类大查询的加速真正交付给用户。需在 query 层按谓词名/元数路由 + 把引擎集合转成 binding-row 格式。

@@ -11,6 +11,7 @@ import { dedupe, factsToProlog } from './lift/fact-model.js'
 import { liftOffline, liftOnline } from './lift/ai-lifter.js'
 import { link } from './link/linker.js'
 import { linkTaint } from './link/taint-link.js'
+import { materialize } from './verify/datalog.js'
 import { getCached, setCache } from './cache.js'
 import { generateHoareOffline, generateHoareOnline } from './formalize/hoare.js'
 import { generateInvariantsOffline, generateInvariantsOnline } from './formalize/invariant.js'
@@ -46,7 +47,7 @@ export function walkFiles(root) {
   return out
 }
 
-export async function extractProject(root, { lift = 'offline', formalize = 'off', maxFiles = 5000 } = {}) {
+export async function extractProject(root, { lift = 'offline', formalize = 'off', maxFiles = 5000, engine = 'prolog' } = {}) {
   const files = walkFiles(root).slice(0, maxFiles)
   let facts = []
   const rawLines = []
@@ -95,6 +96,11 @@ export async function extractProject(root, { lift = 'offline', formalize = 'off'
   // summaries in other files (needs decl/4 from link above) → virtual sinks.
   facts.push(...linkTaint(facts))
   facts = dedupe(facts)
+  // ★5 scale engine (docs/11): materialize the expensive closures (dead_code,
+  // tainted) with the zero-install semi-naive engine and assert engine_materialized,
+  // so tau-prolog's recursive rules short-circuit and violation/2 reads the facts.
+  // Opt-in (engine='datalog'); default 'prolog' leaves the fact base untouched.
+  if (engine === 'datalog') facts.push(...materialize(facts))
   return { facts, rawLines, fileCount: files.length, methods }
 }
 

@@ -38,7 +38,8 @@
 % Xnode was already laid down). No new rule: the join reuses source/1.
 
 % A node is tainted if it is a source, or untrusted data flows into it.
-tainted(N) :- tainted_(N, [N]).
+% (★5: short-circuit when the semi-naive engine has materialized tainted/1 facts.)
+tainted(N) :- \+ engine_materialized, tainted_(N, [N]).
 tainted_(N, _) :- source(N).
 tainted_(N, Visited) :-
     dataflow(M, N),

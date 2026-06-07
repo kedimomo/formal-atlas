@@ -18,6 +18,8 @@
  * pass is sound: compute the closures first, then the negated verdicts.
  */
 
+import { fact } from '../lift/fact-model.js'
+
 /** Per-node forward transitive closure (1+ steps) of an adjacency map. */
 function transitiveClosure(edges) {
   const reach = new Map() // from -> Set(reachable in 1+ steps)
@@ -121,4 +123,18 @@ export function evaluate(facts) {
   }
 
   return { reaches, cyclic, deadCode, tainted, rReaches }
+}
+
+/**
+ * ★5 facts to inject for the `--engine=datalog` path: the materialized verdicts
+ * (dead_code/2, tainted/1) plus the `engine_materialized` flag that short-circuits
+ * their recursive Prolog rules (resolved.pl/taint.pl). tau-prolog then answers
+ * violation/2 from these ground facts instead of recomputing the closures.
+ */
+export function materialize(facts) {
+  const e = evaluate(facts)
+  const out = [fact('engine_materialized')]
+  for (const fn of e.deadCode) { const [f, n] = fn.split('\t'); out.push(fact('dead_code', f, n)) }
+  for (const n of e.tainted) out.push(fact('tainted', n))
+  return out
 }

@@ -23,6 +23,13 @@
 :- dynamic(addr_taken/2).
 :- dynamic(unresolved_call/1).
 
+% ★5 scale engine (docs/11): when the zero-install semi-naive Datalog engine has
+% already materialized the expensive closures (dead_code, tainted) as facts, it
+% asserts engine_materialized so the recursive/scan-heavy rule below short-circuits
+% — the injected facts answer instead. Absent the flag (the default), it is never
+% asserted, so `\+ engine_materialized` always succeeds and behavior is identical.
+:- dynamic(engine_materialized/0).
+
 % ----- Transitive reachability over the RESOLVED graph (cycle-safe) -----
 r_reaches(A, B) :- r_reaches_(A, B, [A]).
 r_reaches_(A, B, _) :- rcall(A, B).
@@ -40,6 +47,7 @@ r_entry(Q) :- decl(Q, _, Name, routine), entry(Name).
 % The last conjunct keeps false positives near zero: if a dynamic/ambiguous
 % call mentions the name, we conservatively decline to call it dead.
 dead_code(File, Name) :-
+    \+ engine_materialized,
     decl(Q, File, Name, routine),
     \+ rcall(_, Q),
     \+ r_entry(Q),

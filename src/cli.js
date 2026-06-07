@@ -17,7 +17,7 @@ const HELP = `formal-atlas — lift code into logic, verify with Prolog/Datalog.
 
 Usage:
   formal-atlas extract <path> [--out=facts.pl] [--lift=offline|online|none]
-  formal-atlas verify  <path> [--lift=offline|online|none]
+  formal-atlas verify  <path> [--lift=offline|online|none] [--engine=prolog|datalog]
   formal-atlas query   <path> "<goal>." [--lift=...]
   formal-atlas lift    <path>            (extract + online AI lift)
   formal-atlas refine  <path> [--online] (lift decidable refinements, Z3-check φ_pre ⇒ φ_post)
@@ -54,6 +54,7 @@ async function main() {
   const { flags, positional } = parseFlags(rest)
   const target = positional[0]
   const lift = flags.lift || 'offline'
+  const engine = flags.engine || 'prolog' // ★5: --engine=datalog materializes closures via the semi-naive engine
 
   if (!cmd || cmd === 'help' || flags.help) { console.log(HELP); return }
   if (!target) { console.error('error: missing <path>\n'); console.log(HELP); process.exit(2) }
@@ -139,7 +140,7 @@ async function main() {
   if (!(await hasProlog())) { console.error('tau-prolog unavailable — run `npm install` inside formal-atlas/'); process.exit(1) }
 
   if (cmd === 'verify') {
-    const proj = await extractProject(target, { lift })
+    const proj = await extractProject(target, { lift, engine })
     const program = buildProgram(proj)
     const rows = await runQuery(program, 'violation(Subject, Rule).')
     console.error(`# verify ${target} — ${proj.fileCount} files, ${proj.facts.length} facts ${JSON.stringify(proj.methods)}`)

@@ -205,15 +205,19 @@ test('★6 slice-2 taint-into-callee: html/sql wrappers flagged, json wrapper su
   assert.ok(suppressed.some((r) => String(r.N).includes('psink_sendJson')), 'json-wrapper flow is suppressed, not silently dropped')
 })
 
-test('★6 slice-3 cross-file taint: a param-sink wrapper in another file is joined; the json wrapper stays suppressed', async () => {
+test('★6 slice-3 cross-file taint: param-sink wrappers in another file are joined (incl. import alias); json wrapper stays suppressed', async () => {
   const program = buildProgram(await extractProject(root('examples/taint-xfile'), { lift: 'none' }))
   // param_sink summaries are QId-keyed to the DEFINING file (wrappers.js), the
   // tainted args originate in handlers.js — a genuine cross-file join.
   const psinks = (await runQuery(program, 'param_sink(F, I, K, C).')).map((r) => `${r.F}/${r.I}/${r.K}/${r.C}`).sort()
   assert.deepEqual(psinks, ['wrappers.js::renderHtml/1/xss/html', 'wrappers.js::replyJson/1/xss/json'].sort())
   const vios = await runQuery(program, "violation(N, 'taint-reaches-sink').")
-  assert.equal(vios.length, 1, 'the cross-file html wrapper is the only true positive')
-  assert.ok(String(vios[0].N).includes('xsink_renderHtml'), 'subject names the cross-file sink')
+  const subjects = vios.map((v) => String(v.N)).sort()
+  // renderHtml (direct import) + paint (import ALIAS of renderHtml) are both true positives;
+  // replyJson is a JSON wrapper (Ct=json), suppressed by the ★3 content-type guard.
+  assert.equal(vios.length, 2, 'two cross-file html flows flagged (direct import + import alias)')
+  assert.ok(subjects.some((s) => s.includes('xsink_renderHtml')), 'direct-import wrapper resolved')
+  assert.ok(subjects.some((s) => s.includes('xsink_paint')), 'import-aliased wrapper resolved via import_binding')
   const suppressed = await runQuery(program, 'suppressed_xss(N).')
   assert.ok(suppressed.some((r) => String(r.N).includes('xsink_replyJson')), 'the cross-file json wrapper is suppressed, not flagged')
 })

@@ -18,7 +18,7 @@ npm test                                                  # 9 smoke + 22 engines
 node src/cli.js smt faithfulness examples/faithfulness/abs.faithful.json   # ✅ faithful + round-trip ✅ equivalent
 node src/cli.js verify examples/taint-interproc            # ★6 刀1：getName→innerHTML 跨调用真阳；rows()/consume 无误报
 node src/cli.js verify examples/taint-paramsink            # ★6 刀2：render(html)/runSql(sql) 真阳 2 条；sendJson(json) 抑制 1 条
-node src/cli.js verify examples/taint-xfile                # ★6 刀3：跨文件 renderHtml 真阳 1 条；replyJson(json) 跨文件抑制 1 条
+node src/cli.js verify examples/taint-xfile                # ★6 刀3：跨文件 renderHtml + 别名 paint 真阳 2 条；replyJson(json) 跨文件抑制 1 条
 node src/cli.js explain examples/repair                   # ★3 证明树
 node src/cli.js verify  ../src/server/routes              # ★3+★6：直接 sink_xss 1 条；95 假 XSS 抑制 + 过程间 json 全抑制（0 误报）
 ```
@@ -28,7 +28,7 @@ node src/cli.js verify  ../src/server/routes              # ★3+★6：直接 s
 - **★6 过程间污点·三刀已实现**（`docs/10-interprocedural-taint.md`）：
   - **刀1（tainted-RETURN 摘要）**：`summarizeReturns` 给 within-file tainted-RETURN 摘要——`const x = helper(req)` 当 helper 返回不可信数据时跨调用污染 x（sound-leaning，`return db.query(arg)` 这类返回"结果而非输入"的不算 conduit）。发 `taint_returns(Fn)`；夹具 `examples/taint-interproc/`。
   - **刀2（参数→形参反向 / param-sink）**：`summarizeParamSinks` 给 `param_sink('File::Fn',Idx,Kind,Ct)` 摘要——只测 `sinkValueExpr` 的危险值位置、**排除接收者**（db/res/reply）；调用点发**虚拟汇**复用既有 `violation`/`html_safe`，故 **Ct=json 包装器在过程间被原样抑制**（不倒回 ★3）。夹具 `examples/taint-paramsink/`。
-  - **刀3（跨文件 param-sink 连接）**：抽取器发 QId 键 `param_sink` + `taint_arg(File,Callee,Idx,ArgNode)`；`src/link/taint-link.js` 在 `link()` 后把 callee 解析到 QId（同文件/全局唯一 decl，sound）→ cross-file 命中即发虚拟汇，json 仍抑制。为守 ≤200 行抽取层拆三：`taint-patterns.js`/`taint-interproc.js`/`taint.js`。夹具 `examples/taint-xfile/`、2 测试。实测路由上 cross-file 0 误报。
+  - **刀3（跨文件 param-sink 连接）**：抽取器发 QId 键 `param_sink` + `taint_arg(File,Callee,Idx,ArgNode)`；`src/link/taint-link.js` 在 `link()` 后把 callee 解析到 QId（**复用 linker 同序：import_binding 别名 → 同文件 → 全局唯一 decl**，sound）→ cross-file 命中即发虚拟汇，json 仍抑制。为守 ≤200 行抽取层拆三：`taint-patterns.js`/`taint-interproc.js`/`taint.js`。夹具 `examples/taint-xfile/`（含 `import {x as y}` 别名）、2 测试。实测路由上 cross-file 0 误报。
 - **#6 续刀（最连贯的下一步）**：**returns-taint 跨文件**（比 param-sink 跨文件更难——刀1 的效果反哺调用方文件内 intra-proc 流，需跨文件不动点迭代）→ 最终 exploded-supergraph 上的精确 CFL-可达；可选：用 `import_binding/4` 把 `taint_arg` callee 解析扩到 import 别名。
 - 其余：**#5 Soufflé/增量 Datalog**（规模）、**#7 Doop 级指向**（动态分派/反射）、**#8 全 ITP 放电**（Dafny/Verus/Lean，地平线）。
 - **#5 Soufflé / 增量 Datalog**（规模）：大库 tau-prolog 慢 → Datalog→并行 C++；watch 模式增量维护。

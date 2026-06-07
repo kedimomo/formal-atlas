@@ -23,7 +23,7 @@ node src/cli.js verify  ../src/server/routes              # ★3：taint XSS ~92
 回归：`verify examples/sample-project` 仍 7 条违规；taint smoke 仍 1 条 `sink_sql`。
 
 ## 下一步：★1–★4 主线已完成，转入"按需"的规模/精度工程（见 06-frontier-map 第 5–8 项）
-不预先铺开，按真实需求选一项启动。**最连贯的下一步是 #6 IFDS/CFL-可达污点**——它把 ★3 刚分诊过的**行级/文件内**污点升级为 **sound 的过程间精确流**（Reps–Horwitz–Sagiv POPL'95，多项式），直接消掉 `sink_ct` 之外的跨过程误报根因。其余：
+不预先铺开，按真实需求选一项启动。**最连贯的下一步是 #6 IFDS/CFL-可达污点**——它把 ★3 刚分诊过的**行级/文件内**污点升级为 **sound 的过程间精确流**（Reps–Horwitz–Sagiv POPL'95，多项式），直接消掉 `sink_ct` 之外的跨过程误报根因。**设计 spec 已写：[`docs/10-interprocedural-taint.md`](docs/10-interprocedural-taint.md)**（按项目"星标实现前先开 spec"的落地约束）——含两遍 tainted-summary 算法、**避免重新引入误报的精确 returns-taint 规则**、升级-回滚安全开关、夹具与测试计划。照它实现即可。其余：
 - **#5 Soufflé / 增量 Datalog**（规模）：大库 tau-prolog 慢 → Datalog→并行 C++；watch 模式增量维护。
 - **#7 Doop 级过程间指向**（精度）：解析动态分派/反射，死代码/污点误报压到工业级。
 - **#8 全 ITP 放电**（地平线）：接 Dafny/Verus/Lean CLI 真正放电证明义务（最严最贵）。

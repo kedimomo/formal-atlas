@@ -335,6 +335,15 @@ test('★7 points-to: cycle-safe — an assign cycle terminates (where tau-prolo
   assert.deepEqual([...(pts.get('b') || [])], ['obj:o'], 'cycle propagates to fixpoint, no infinite loop')
 })
 
+test('★7 points-to: AST extraction resolves a var-aliased dynamic call end-to-end', async () => {
+  const proj = await extractProject(root('examples/points-to'), { lift: 'none' })
+  // The extractor emits alloc(fn,fn)/assign(h,realHandler)/calleeVar(dispatch,h);
+  // the engine resolves h() — which the name-based linker cannot (h is a variable).
+  const { pts, resolved } = pointsTo(proj.facts)
+  assert.deepEqual([...(pts.get('h') || [])], ['realHandler'], 'h points to realHandler via the alias')
+  assert.ok(resolved.has('dispatch\trealHandler'), 'the dynamic call h() resolves to realHandler')
+})
+
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {
   // A graph WITH a cycle (a→b→c→a) plus c→d and x→a — stresses ancestors×descendants.
   const edges = [['a', 'b'], ['b', 'c'], ['c', 'a'], ['c', 'd'], ['x', 'a']]

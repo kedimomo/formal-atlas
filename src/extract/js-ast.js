@@ -98,6 +98,9 @@ export function extractJs(fileId, code) {
       const kind = (nm.startsWith('anon@') || parent?.type === 'Property') ? 'lambda' : 'routine'
       facts.push(fact('defines', fileId, nm, kind, line(node)))
       if (kind === 'routine') definedRoutines.add(nm)
+      // ★7 points-to: a function definition is its own allocation site (the name
+      // points to the function-object). Lets a var aliased to it resolve calls.
+      facts.push(fact('alloc', nm, nm), fact('isFunction', nm))
       if (parent?.type === 'MethodDefinition') facts.push(fact('method', nm))
       if (node.async) facts.push(fact('async_fn', nm))
       ;(node.params || []).forEach((p, i) => {
@@ -127,6 +130,13 @@ export function extractJs(fileId, code) {
         if (CRYPTO.test(cn) && loopDepth > 0) facts.push(fact('crypto_in_loop', cur()))
         if (EXTERNAL.test(cn)) facts.push(fact('calls_external', cur(), cn))
       }
+      // ★7 points-to: a call through a bare identifier (incl. a variable holding a
+      // function) — resolved to its points-to set, catching dynamic dispatch.
+      if (node.callee?.type === 'Identifier') facts.push(fact('calleeVar', cur(), node.callee.name))
+    }
+    // ★7 points-to: `const x = y` identifier aliasing → assign edge.
+    if (node.type === 'VariableDeclarator' && node.id?.type === 'Identifier' && node.init?.type === 'Identifier') {
+      facts.push(fact('assign', node.id.name, node.init.name))
     }
     if (node.type === 'AwaitExpression' && loopDepth > 0) facts.push(fact('awaits_in_loop', cur()))
     if (node.type === 'ImportDeclaration') {

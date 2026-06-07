@@ -13,16 +13,20 @@ import { runQuery } from '../src/verify/prolog-engine.js'
 import { checkContract } from '../src/verify/smt-bridge.js'
 import { checkRefinementsVerbose } from '../src/verify/refinement-check.js'
 import { termOf } from '../src/lift/fact-model.js'
+import { queryEngine } from '../src/verify/datalog.js'
 
-const cache = new Map() // absPath -> { program, files }
+const cache = new Map() // absPath -> { program, files, facts }
 
 async function programFor(p, onProgress) {
   const abs = path.resolve(process.cwd(), String(p))
   if (!cache.has(abs)) {
     if (onProgress) onProgress(`extracting ${abs}...`)
-    const proj = await extractProject(abs, { lift: 'offline' })
+    // ★5: extract with the semi-naive engine — materializes dead_code/tainted so
+    // the governance tools read facts (parity-proven), and caches the facts so the
+    // `query` tool can route closure goals straight to the engine (110–1238×).
+    const proj = await extractProject(abs, { lift: 'offline', engine: 'datalog' })
     if (onProgress) onProgress(`building Prolog program from ${proj.facts.length} facts...`)
-    cache.set(abs, { program: buildProgram(proj), files: proj.fileCount })
+    cache.set(abs, { program: buildProgram(proj), files: proj.fileCount, facts: proj.facts })
     if (onProgress) onProgress(`cached ${abs} (${proj.fileCount} files)`)
   }
   return cache.get(abs)
@@ -173,8 +177,13 @@ export async function runTool(name, a = {}, onProgress) {
       return j({ count: rows.length, sinks: rows.slice(0, 500).map((r) => r.N) })
     }
     case 'query': {
-      const rows = await ask(a.path, String(a.goal), onProgress)
-      return j({ goal: a.goal, count: rows.length, rows: rows.slice(0, 500) })
+      const g = String(a.goal).trim().endsWith('.') ? String(a.goal).trim() : `${String(a.goal).trim()}.`
+      // ★5: route a pure closure goal (cyclic/reaches/dead_code/tainted/impact)
+      // straight to the semi-naive engine; otherwise fall back to tau-prolog.
+      const { facts } = await programFor(a.path, onProgress)
+      const fast = queryEngine(facts, g)
+      const rows = fast || await ask(a.path, g, onProgress)
+      return j({ goal: a.goal, engine: fast ? 'semi-naive' : 'tau-prolog', count: rows.length, rows: rows.slice(0, 500) })
     }
     case 'contract': {
       return j(await checkContract({ vars: a.vars, pre: a.pre, post: a.post, name: a.name }))

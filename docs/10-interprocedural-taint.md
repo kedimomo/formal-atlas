@@ -1,6 +1,6 @@
 # ★6 过程间污点：tainted-summary，把行级启发式升级为 sound 的跨过程流
 
-> 状态：**六刀已实现（2026-06-07）**——within-file **tainted-RETURN 摘要**（一）、within-file **param-sink**（二，content-type 护栏）、**跨文件 param-sink**（三，QId 摘要 + post-link 解析）、**跨文件 returns-taint**（四，QId conduit + ret_call + post-link 注入 source）、**跨文件 2-hop（returns→param-sink）**（五，两 join 组合,护栏跨跳）、**传递 conduit A→B→C 跨文件不动点**（六,`ret_returns_call` + conduit 集闭包）。完整 IFDS（文件内传递、return-of-arg、exploded supergraph 全量 CFL-可达）仍为后续加刀。
+> 状态：**七刀已实现（2026-06-07）**——within-file **tainted-RETURN 摘要**（一）、within-file **param-sink**（二，content-type 护栏）、**跨文件 param-sink**（三）、**跨文件 returns-taint**（四，ret_call + post-link 注入 source）、**跨文件 2-hop（returns→param-sink）**（五）、**传递 conduit 跨文件不动点**（六，`ret_returns_call` + conduit 集闭包）、**传递 conduit 同文件不动点**（七，`summarizeReturns` 收尾闭包）。完整 IFDS（return-of-arg、exploded supergraph 全量 CFL-可达）仍为后续加刀。
 > 遵循 [`06-frontier-map.md` §落地约束](./06-frontier-map.md)。数学依据：Reps–Horwitz–Sagiv POPL'95（IFDS = exploded supergraph 上的图可达，多项式）；本档先做 IFDS 的**轻量摘要近似**（function summary）。
 
 ## 一、要解决的问题
@@ -174,7 +174,7 @@ function show(req){ const name = getName(req); render(el, name) }  // 2-hop 真 
 - **`summarizeReturns` 改返回 `{ conduits, returnCalls }`**：除直接 conduit 外，遇 `return callee(..)`（`calleeOf` 只认**裸** callee——`db.query(..)` 这类 dotted 不算,天然 sound）收集 `[fn, callee]`。`taint.js` 对每条发 `ret_returns_call('File::Fn', Callee)`。
 - **`taint-link.js` 在 return-join 前跑跨文件不动点**：从直接 conduit 集（`taint_returns_q`）出发,反复对每条 `ret_returns_call(QFn, Callee)` 用**同一个 `resolve()`**（import 别名→同文件→全局唯一）把 Callee 解析到 QId,命中 conduit 集即把 QFn 并入,迭代到不动点（**单调、以 `|returnCalls|` 为界 → 必然终止**；自递归/环若无基础 conduit 则不传播,sound）。新并入的传递 conduit 也发 `taint_returns_q(QFn)` 以便 query/explain 看见。随后第四刀 return-join 用**闭包后的** conduit 集 → A→B→C 链上 consumer 的局部变量被注入 source。
 
-soundness 不变：传递性只在 return 的裸 callee **解析到已证 conduit** 时成立;`return db.query(x)`（dotted,非裸）/`return f(x)`（f 非 conduit）一律不传播。已知限制：consumer 与传递 conduit **同文件**时,第四刀 return-join 跳过 same-file（留待 within-file 摘要内做不动点）——文件内委托的漏报,非误报。
+soundness 不变：传递性只在 return 的裸 callee **解析到已证 conduit** 时成立;`return db.query(x)`（dotted,非裸）/`return f(x)`（f 非 conduit）一律不传播。
 
 ### 验证（已落地）
 - 夹具 `examples/taint-transitive/`（三文件 A→B→C）：`source.js::getName`(基础)→`delegate.js::fetchName`(传递,`return getName(req)`)→`consumer.js::show`。`taint_returns_q` 经不动点含 `getName`+`fetchName` 两条;`violation` 恰 1（`consumer.js:10`,两跳之外的汇）。
@@ -182,11 +182,21 @@ soundness 不变：传递性只在 return 的裸 callee **解析到已证 condui
 - **真实库实测**（`../src/server/routes`）：**新增 0 误报**（仍 1 条直接 `sink_xss`），事实数仅 +~35。
 - 回归（实测绿）：sample-project 7、taint 1、taint-interproc 1、taint-paramsink 2、taint-xfile 2、taint-retxfile 2、taint-2hop 1 全不变；`npm test` 通过（9 smoke + **25** engines + MCP 16-工具自检）。
 
-## 十一、后续加刀（exploded supergraph 全量 IFDS）
+## 十一、第七刀：文件内传递 conduit（同文件不动点，已落地 2026-06-07）
 
-within-file 两刀 + cross-file param-sink + cross-file returns-taint + cross-file 2-hop + 传递 conduit 不动点（均含 import 别名解析、content-type 护栏跨跳）已落地。完整 IFDS 仍待：
+第六刀的不动点在 `taint-link.js`（post-link），只闭包**跨文件** conduit 集——consumer 与传递 conduit **同文件**时,第四刀 return-join 跳过 same-file,故同文件委托链（`fetchName` 与 `show` 同文件）漏报。第七刀在 **`summarizeReturns` 收尾处加一个同文件不动点**补齐:收集完 direct conduits + `returnCalls` 后,反复对每条 `[fn, callee]`——若 `callee` 是**同文件 conduit**（按名直接命中 `conduits`）则把 `fn` 也并入,迭代到不变（单调、以 `|returnCalls|` 为界 → 终止）。
 
-- **文件内传递 conduit**：当前不动点只闭包跨文件 conduit 集;consumer 与传递 conduit 同文件的链仍漏（第四刀 same-file 跳过）——需在 within-file 摘要内也跑一次 conduit 不动点。
+于是同文件 `fetchName` 升格为 **direct conduit**（进 `conduits` ⇒ 既发 `taint_returns(Fn)`/`taint_returns_q`、`returnsTaint.has(fetchName)` 也为真）→ 同文件 consumer `const name = fetchName(req)` 经第一刀直接 source。与第六刀**互补**:同文件 callee 在此解析,跨文件 callee 仍留给 `taint-link.js` 的不动点（同文件不动点解不开的就留在 `returnCalls` 里）。slice-1 锚点不受影响（`taint-interproc` 的 `rows()` 是 dotted、`getName` 返回裸变量,无 `return 裸conduit(..)` → `returnCalls` 空,不动点空转）。
+
+### 验证（已落地）
+- 夹具 `examples/taint-localtransitive/handlers.js`（单文件）：`getName`(基础)→`fetchName`(`return getName(req)` 同文件传递)→`show` 同文件消费。`taint_returns` 经同文件不动点含 `getName`+`fetchName`;`violation` 恰 1（`handlers.js:18`）。
+- 测试 `test/engines.test.js` ★6 slice-7：断言 `taint_returns` 含 `fetchName`、违规恰 1。
+- 回归（实测绿）：slice-1 锚点 `taint-interproc` 的 `taint_returns` 仍仅 `[getName]`;sample-project 7、其余 taint 夹具与 routes 全不变（0 新误报）；`npm test` 通过（9 smoke + **26** engines + MCP 16-工具自检）。
+
+## 十二、后续加刀（exploded supergraph 全量 IFDS）
+
+within-file 两刀 + cross-file param-sink + cross-file returns-taint + cross-file 2-hop + 传递 conduit 不动点（跨文件 + 同文件，均含 import 别名解析、content-type 护栏跨跳）已落地。完整 IFDS 仍待：
+
 - **返回-of-tainted-arg**：`function id(x){return x}` 这类**透传形参**的返回（`return x` 当 x 是形参）——区别于"内部制造污点"的 conduit,是 param→return 摘要,可与 param-sink 摘要合流。
 - 最终 **exploded supergraph 上的精确 CFL-可达**（Reps–Horwitz–Sagiv 全量 IFDS），把 conduit/param-sink/return 三类摘要统一成 supergraph 上的 realizable-path 可达。
 

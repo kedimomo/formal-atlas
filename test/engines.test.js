@@ -262,3 +262,15 @@ test('★6 slice-6 transitive conduit: `return callee(..)` makes a function a co
   assert.equal(vios.length, 1, 'the A→B→C transitive chain is a single true positive')
   assert.ok(String(vios[0].N).includes('consumer.js:10:sink_xss'), 'the sink two hops down the chain fires')
 })
+
+test('★6 slice-7 within-file transitive conduit: `return localConduit(..)` is a conduit too (same-file fixpoint)', async () => {
+  const program = buildProgram(await extractProject(root('examples/taint-localtransitive'), { lift: 'none' }))
+  // getName is a direct conduit; fetchName `return getName(req)` becomes one via
+  // the within-file fixpoint (same-file callee resolved by name), so a same-file
+  // consumer is flagged — the case slice 6's cross-file return-join skips.
+  const conduits = (await runQuery(program, 'taint_returns(F).')).map((r) => r.F).sort()
+  assert.deepEqual(conduits, ['fetchName', 'getName'], 'the within-file fixpoint promotes the transitive delegate')
+  const vios = await runQuery(program, "violation(N, 'taint-reaches-sink').")
+  assert.equal(vios.length, 1, 'the same-file 2-hop chain is a true positive')
+  assert.ok(String(vios[0].N).includes('handlers.js:18:sink_xss'))
+})

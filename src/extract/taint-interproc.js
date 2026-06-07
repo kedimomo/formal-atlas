@@ -59,6 +59,14 @@ export function summarizeReturns(code) {
       if (callee) returnCalls.push([fn, callee]) // transitive candidate (resolved post-link)
     }
   }
+  // Within-file transitive closure: `return localConduit(..)` makes fn a conduit
+  // too. Same-file callees resolve here by NAME; cross-file ones stay in
+  // returnCalls for taint-link.js's fixpoint. Monotone + bounded ⇒ terminates.
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [fn, callee] of returnCalls) if (!conduits.has(fn) && conduits.has(callee)) { conduits.add(fn); changed = true }
+  }
   return { conduits, returnCalls }
 }
 

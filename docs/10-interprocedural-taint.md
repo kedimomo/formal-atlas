@@ -1,6 +1,6 @@
 # ★6 过程间污点：tainted-summary，把行级启发式升级为 sound 的跨过程流
 
-> 状态：**第一刀已实现（2026-06-07）**——within-file、name-resolved 的 tainted-RETURN 摘要。完整 IFDS（exploded supergraph、参数→形参双向、跨文件摘要）仍为后续加刀。
+> 状态：**第一刀 + 第二刀已实现（2026-06-07）**——within-file、name-resolved 的 **tainted-RETURN 摘要**（第一刀）与 **param-sink 摘要 / 参数→形参反向传播**（第二刀，带 content-type 精度护栏）。完整 IFDS（exploded supergraph、跨文件摘要）仍为后续加刀。
 > 遵循 [`06-frontier-map.md` §落地约束](./06-frontier-map.md)。数学依据：Reps–Horwitz–Sagiv POPL'95（IFDS = exploded supergraph 上的图可达，多项式）；本档先做 IFDS 的**轻量摘要近似**（function summary）。
 
 ## 一、要解决的问题
@@ -37,7 +37,7 @@ function q(req){ return db.query('... ' + req.query.id) }  // 返回的是查询
 
 ## 四、实现：两遍，作为 sound-leaning 精度改进（已落地）
 
-实现在 `src/extract/taint.js` 内，**always-on**（不走开关）——与 points-to/linker 这两次精度改进同样的取舍：§三 的精确 returns-taint 规则保证它**只新增真阳、不引入误报**，故按"严格更优的精度修复可直接应用"处理（也避开了按内容缓存的抽取层加 flag 的缓存键问题）。实测所有现有夹具行为不变（见 §五）。
+实现在 `src/extract/taint-interproc.js`（摘要）+ `taint.js`（发射）内，**always-on**（不走开关）——与 points-to/linker 这两次精度改进同样的取舍：§三 的精确 returns-taint 规则保证它**只新增真阳、不引入误报**，故按"严格更优的精度修复可直接应用"处理（也避开了按内容缓存的抽取层加 flag 的缓存键问题）。实测所有现有夹具行为不变（见 §五）。
 
 - **Pass 1（摘要 `summarizeReturns`）**：扫全文件，按函数维护 intra-fn 污点（镜像主循环的 FN_DEF 边界重置），遇 `return E` 按 §三精确规则判定 → 收集 `returnsTaint` 并发事实 `taint_returns(Fn)`。含 `fnNameOf`（`function f`/`const f=()=>`/方法 `f(){`）+ `calleeOf`（`(await) f(..)`）两个名字抽取辅助。
 - **Pass 2（主发射循环，增量）**：赋值 `const x = NAME(args)` 且 `NAME ∈ returnsTaint` 时，发 `source(x)` 并 `taint.set(x)`——x 由 helper 引入不可信数据。**纯增量**：只新增边；helper 不在 returnsTaint 时行为不变。
@@ -50,12 +50,35 @@ function q(req){ return db.query('... ' + req.query.id) }  // 返回的是查询
 - 测试 `test/engines.test.js` ★6：`taint_returns(F)` 仅 `[getName]`（`rows` 不在内）；`violation(taint-reaches-sink)` 恰 1 条（show 的 interproc 真阳，consume 无 FP）。
 - 回归（实测绿）：`examples/taint` 仍 1 条 `sink_sql`；`sample-project` 仍 7 条；全套 `npm test` 通过（9 smoke + 20 engines + MCP 16-工具自检）。
 
-## 六、后续加刀
+## 六、第二刀：参数→形参反向传播（taint-INTO-callee，已落地 2026-06-07）
 
-第一刀（tainted-RETURN 摘要）已落地。完整 IFDS 仍待：
+第一刀解决"callee 返回污点污染 caller"；第二刀解决其镜像——**caller 的污点实参，经形参流到 callee 内部的汇**：
 
-- **参数→形参反向传播**（taint-INTO-callee：`sink(x)` 在 callee、`x` 来自 caller 的污点实参）。**关键精度约束（实现前必读）**：param-sink 摘要**必须携带内部汇的 content-type 分类**。否则一个 JSON 包装器 `function send(res,obj){ res.send(obj) }` 会把"形参 obj 到达 xss 汇"记成 param-sink，调用 `send(reply, userObj)` 即被误报——**正是 ★3 已消除的那类假 XSS，会在过程间被重新引入**。故摘要需记 `param_sink(Fn, Idx, Kind, Ct)`，并在调用点复用 ★3 的 `html_safe` 抑制（json ⇒ 不报）。这条约束是把第二刀做对（而非倒回 ★3）的核心，单独做需配套夹具（JSON 包装器**不**误报 + 真 HTML 包装器报）。
-- **跨文件摘要**（用 linker 的 `rcall/2` 解析跨文件调用 + 持久化摘要）。
-- 最终 **exploded supergraph 上的精确 CFL-可达**。
+```js
+function render(el, html) { el.innerHTML = html }   // 形参 html(idx 1) 到达 xss 汇
+function handleHtml(req)  { render(el, req.query.name) } // 真 XSS：污点实参 → render 的 html 汇
+```
 
-按真实规模需要再推进；本框架（摘要 + 既有 `tainted/2` 闭包）可增量承载。
+### 关键精度约束（实现的核心，已遵守）
+param-sink 摘要**必须携带内部汇的 content-type 分类**。否则一个 JSON 包装器 `function sendJson(reply,obj){ reply.send(obj) }` 会把"形参 obj 到达 xss 汇"记成裸 param-sink，调用 `sendJson(reply, userObj)` 即被误报——**正是 ★3 已消除的那类假 XSS，会在过程间被重新引入**。故摘要记 `param_sink(Fn, Idx, Kind, Ct)`，并在调用点复用 ★3 的 `html_safe` 抑制（json ⇒ 不报）。
+
+### 实现（`summarizeParamSinks` + 调用点虚拟汇）
+- **Pass 1b（摘要 `summarizeParamSinks`，`taint-interproc.js`）**：按函数维护 `形参名→其下标集` 的 param-taint 映射（FN_DEF 边界以 `paramsOf` 重新播种）。赋值按 mention 传播 param-taint（**调用结果不传播**——与第一刀同一条 sound 规则）；遇汇时**只测 `sinkValueExpr` 抽出的"危险值"位置**（`.innerHTML=` 的右值、`.send(/.query(/eval(` 的实参），**排除接收者**（`db`/`res`/`reply`）。命中即发 `param_sink(Fn, Idx, Kind, Ct)`，Ct 为 xss 的 `classifyXssCt` 或非 xss 的 `na`。
+- **Pass 2（调用点连接，`taint.js`）**：within-file 调用 `helper(.., arg, ..)` 且 `helper` 有 `param_sink(helper, Idx, Kind, Ct)`、第 Idx 实参为污点（裸污点变量 / 内联 SOURCE / 第一刀的 tainted-RETURN 调用）时，在调用点发**虚拟汇** `sink(Site,Kind)`+`sink_ct(Site,Ct)`（xss）+`dataflow(argNode,Site)`。**零新规则**——既有 `violation`/`html_safe`/`suppressed_xss`/`sanitized_into` 原样裁决，故 `Ct=json` 的包装器在过程间被原样抑制。
+
+为守 ≤200 行架构红线，原 `taint.js` 拆为三：`taint-patterns.js`（词法原子 + parse 助手）、`taint-interproc.js`（两遍摘要）、`taint.js`（发射管线 + 调用点连接）。
+
+### 验证（已落地）
+- 夹具 `examples/taint-paramsink/handlers.js`：`render`(html 包装器，Ct=html)→真阳；`sendJson`(JSON 包装器，Ct=json)→**抑制**（`suppressed_xss`，非漏报）；`runSql`(sql 包装器)→真阳；三个包装器的**接收者形参**（idx 0：el/reply/db）均**不**入 param_sink。
+- 测试 `test/engines.test.js` ★6 slice-2：`param_sink/4` 恰 `render/1/xss/html`、`runSql/1/sql/na`、`sendJson/1/xss/json`；`violation` 恰 2 条（render+runSql 真阳，sendJson 不在内）；`suppressed_xss` 含 `psink_sendJson`。
+- **真实库实测**（`../src/server/routes`）：slice 2 在路由上发现 **4 处过程间污点实参流入 JSON 包装器**，**全部被 content-type 护栏正确抑制**（0 误报）；唯一存活的 taint 违规仍是既有的**直接** `sink_xss`（非 psink），证明第二刀在工业代码上**只在能论证时报、不倒回 ★3**。
+- 回归（实测绿）：`examples/taint` 仍 1、`sample-project` 仍 7、`repair` 仍 1、`taint-interproc` 仍 1；全套 `npm test` 通过（9 smoke + **21** engines + MCP 16-工具自检）。
+
+## 七、后续加刀（跨文件 + exploded supergraph）
+
+within-file 两刀（RETURN 摘要 + param-sink）已落地。完整 IFDS 仍待：
+
+- **跨文件摘要**（最连贯的下一步）：用 linker 的 `rcall/2` 把调用点解析到 file-qualified 的 callee，再持久化 `param_sink`/`taint_returns` 摘要，使虚拟汇能跨文件连接（当前两刀的摘要按 bare-name 在文件内连接）。
+- 最终 **exploded supergraph 上的精确 CFL-可达**（Reps–Horwitz–Sagiv 全量 IFDS）。
+
+按真实规模需要再推进；本框架（两遍摘要 + 既有 `tainted/2` 闭包 + 调用点虚拟汇）可增量承载。

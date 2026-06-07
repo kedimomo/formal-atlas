@@ -16,6 +16,15 @@
 :- dynamic(dataflow/2).
 :- dynamic(sink_ct/2).
 :- dynamic(taint_returns/1).
+:- dynamic(param_sink/4).
+
+% ★6b param-sink summaries: param_sink(Fn, Idx, Kind, Ct) records that Fn's
+% formal parameter at Idx reaches an internal sink of Kind (Ct = xss
+% content-type, or 'na'). The extractor joins this at within-file call sites by
+% emitting a VIRTUAL sink (sink/2 + sink_ct/2 + dataflow/2) — so the violation
+% and html_safe rules below fire on interprocedural flows UNCHANGED, and a
+% provably-JSON wrapper (Ct=json) is suppressed exactly as a direct one is.
+% Declared dynamic for query safety; no separate rule needed (docs/10 §六).
 
 % A node is tainted if it is a source, or untrusted data flows into it.
 tainted(N) :- tainted_(N, [N]).

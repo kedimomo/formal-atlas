@@ -188,3 +188,19 @@ test('★6 interprocedural taint: a tainted-return helper propagates across a ca
   assert.equal(vios.length, 1, 'exactly the interprocedural true positive, no db-wrapper FP')
   assert.ok(String(vios[0].N).includes('sink_xss'))
 })
+
+test('★6 slice-2 taint-into-callee: html/sql wrappers flagged, json wrapper suppressed by content-type, receiver not flagged', async () => {
+  const program = buildProgram(await extractProject(root('examples/taint-paramsink'), { lift: 'none' }))
+  // Summaries name the VALUE param, never the receiver (el/reply/db at idx 0).
+  const psinks = (await runQuery(program, 'param_sink(F, I, K, C).')).map((r) => `${r.F}/${r.I}/${r.K}/${r.C}`).sort()
+  assert.deepEqual(psinks, ['render/1/xss/html', 'runSql/1/sql/na', 'sendJson/1/xss/json'])
+  const vios = await runQuery(program, "violation(N, 'taint-reaches-sink').")
+  // handleHtml → render(html-sink) and handleSql → runSql(sql-sink) are true positives;
+  // handleJson → sendJson is a JSON wrapper (Ct=json), suppressed by the ★3 content-type guard.
+  assert.equal(vios.length, 2, 'html-wrapper + sql-wrapper calls flagged; json-wrapper not')
+  const subjects = vios.map((v) => String(v.N)).sort()
+  assert.ok(subjects.some((s) => s.includes('psink_render')) && subjects.some((s) => s.includes('psink_runSql')))
+  assert.ok(subjects.every((s) => !s.includes('sendJson')), 'the JSON wrapper is not a true positive')
+  const suppressed = await runQuery(program, 'suppressed_xss(N).')
+  assert.ok(suppressed.some((r) => String(r.N).includes('psink_sendJson')), 'json-wrapper flow is suppressed, not silently dropped')
+})

@@ -18,6 +18,7 @@
 :- dynamic(taint_returns/1).
 :- dynamic(taint_returns_q/1).
 :- dynamic(ret_call/3).
+:- dynamic(taint_arg/4).
 :- dynamic(param_sink/4).
 
 % ★6b param-sink summaries: param_sink(Fn, Idx, Kind, Ct) records that Fn's

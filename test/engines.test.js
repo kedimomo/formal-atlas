@@ -238,3 +238,16 @@ test('★6 slice-4 cross-file returns-taint: a tainted-RETURN conduit in another
   assert.ok(subjects.includes('consumer.js:27:sink_xss'), 'import-aliased conduit result reaches the sink (via import_binding)')
   assert.ok(!subjects.includes('consumer.js:20:sink_xss'), 'the db-result wrapper is not a conduit → no false positive')
 })
+
+test('★6 slice-5 cross-file 2-hop: a returns-taint conduit result passed to a cross-file param-sink composes; the JSON guard holds across both hops', async () => {
+  const program = buildProgram(await extractProject(root('examples/taint-2hop'), { lift: 'none' }))
+  const vios = await runQuery(program, "violation(N, 'taint-reaches-sink').")
+  const subjects = vios.map((v) => String(v.N)).sort()
+  // show(): getName (conduit, slice-4 sources it) → render (param-sink, slice-3 virtual sink) = TP.
+  // send(): same chain into replyJson (Ct=json) → suppressed by the ★3 content-type guard, 2 hops deep.
+  assert.equal(vios.length, 1, 'the html 2-hop chain is a true positive; the json 2-hop chain is suppressed')
+  assert.ok(subjects.some((s) => s.includes('xsink_render')), 'returns→param-sink composes into a cross-file virtual sink')
+  assert.ok(subjects.every((s) => !s.includes('replyJson')), 'the json wrapper is not a true positive')
+  const suppressed = (await runQuery(program, 'suppressed_xss(N).')).map((r) => String(r.N))
+  assert.ok(suppressed.some((s) => s.includes('xsink_replyJson')), 'the 2-hop json flow is suppressed, not silently dropped')
+})

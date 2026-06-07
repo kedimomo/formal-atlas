@@ -81,7 +81,10 @@ export function extractTaintJs(fileId, code) {
       const local = paramSinks.get(callee)
       args.forEach((arg, idx) => {
         const bare = arg.trim()
-        if (/^[A-Za-z_]\w*$/.test(bare) && taint.has(bare)) facts.push(fact('taint_arg', fileId, callee, idx, taint.get(bare)))
+        if (/^[A-Za-z_]\w*$/.test(bare)) {
+          if (taint.has(bare)) facts.push(fact('taint_arg', fileId, callee, idx, taint.get(bare)))
+          else if (retTaint.has(bare)) facts.push(fact('taint_arg', fileId, callee, idx, retTaint.get(bare))) // ★6 slice-5: cross-file conduit result, 2-hop into a param-sink
+        }
         const ps = local && local.find((s) => s.idx === idx)
         if (!ps) return
         const src = argSource(arg, taint, returnsTaint, facts, fileId, ln, `psrc_${callee}_${idx}`)

@@ -395,6 +395,21 @@ test('★7 points-to link: --points-to lowers the resolved dynamic call into the
   assert.ok(!evaluate(withoutPT.facts).reaches.has('dispatch\trealHandler'), 'the name-based linker alone cannot resolve the var-call (parity: off = unchanged)')
 })
 
+test('★7 points-to interproc arg flow: a callback passed through a dynamic dispatch is resolved (argActual/formalParam, second-order)', async () => {
+  const withPT = await extractProject(root('examples/points-to-arg'), { lift: 'none', pointsToEnabled: true })
+  const withoutPT = await extractProject(root('examples/points-to-arg'), { lift: 'none' })
+  // run: `fn = invoke; fn(target)`. The extractor emits argActual(run,0,target) +
+  // formalParam(invoke,0,cb); the engine flows target→cb across the resolved
+  // var-call, then resolves cb()→target — a callback handed through a dispatch.
+  const { pts, resolved } = pointsTo(withPT.facts)
+  assert.ok(pts.get('cb')?.has('target'), "the actual `target` flows to invoke's formal `cb` interprocedurally")
+  assert.ok(resolved.has('invoke\ttarget'), 'cb() resolves to target after the interprocedural arg flow (second-order)')
+  // Lowered into the call graph: run→invoke→target→done all become reachable.
+  assert.ok(evaluate(withPT.facts).reaches.has('invoke\ttarget'), 'the callback dispatch lowers into reaches')
+  assert.ok(evaluate(withPT.facts).reaches.has('run\tdone'), 'the full chain run→invoke→target→done resolves through the dispatch')
+  assert.ok(!evaluate(withoutPT.facts).reaches.has('invoke\ttarget'), 'the name-based linker alone cannot (parity: off = unchanged)')
+})
+
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {
   // A graph WITH a cycle (a→b→c→a) plus c→d and x→a — stresses ancestors×descendants.
   const edges = [['a', 'b'], ['b', 'c'], ['c', 'a'], ['c', 'd'], ['x', 'a']]

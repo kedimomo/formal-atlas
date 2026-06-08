@@ -108,7 +108,9 @@ export function extractJs(fileId, code) {
           : (p.type === 'RestElement' && p.argument?.name) ? p.argument.name
             : (p.type === 'AssignmentPattern' && p.left?.name) ? p.left.name
               : `arg${i}`
-        facts.push(fact('param', nm, i, pn))
+        // ★7 points-to: formalParam keys the interprocedural arg→formal flow by the
+        // function-object id (= nm, matching alloc(nm,nm)). Additive+inert without --points-to.
+        facts.push(fact('param', nm, i, pn), fact('formalParam', nm, i, pn))
       })
       scopeStack.push(nm)
       poppedScope = true
@@ -131,8 +133,12 @@ export function extractJs(fileId, code) {
         if (EXTERNAL.test(cn)) facts.push(fact('calls_external', cur(), cn))
       }
       // ★7 points-to: a call through a bare identifier (incl. a variable holding a
-      // function) — resolved to its points-to set, catching dynamic dispatch.
-      if (node.callee?.type === 'Identifier') facts.push(fact('calleeVar', cur(), node.callee.name))
+      // function) — resolved to its points-to set, catching dynamic dispatch. The
+      // identifier ARGUMENTS are the actuals for the interprocedural arg→formal flow.
+      if (node.callee?.type === 'Identifier') {
+        facts.push(fact('calleeVar', cur(), node.callee.name))
+        ;(node.arguments || []).forEach((arg, i) => { if (arg.type === 'Identifier') facts.push(fact('argActual', cur(), i, arg.name)) })
+      }
     }
     // ★7 points-to: `const x = y` identifier aliasing → assign edge.
     if (node.type === 'VariableDeclarator' && node.id?.type === 'Identifier' && node.init?.type === 'Identifier') {

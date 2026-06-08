@@ -21,8 +21,23 @@
 4. **诚实降级**：`which dafny` 探测；prover 没装（如本机：dafny/verus/lean 皆 absent）→ `needs-prover`（仿 `needs-llm`），**绝不假证**。
 5. **CLI `prove <path>` + MCP `prove` 工具**，默认关、opt-in、parity-safe。
 
-## 五、与 MCP sampling 的关系（关键）
-**MCP sampling 给不了 prover**。sampling 给的是 **LLM**——LLM 可以帮**写** Dafny 标注/不变式（autoformalization），但**证明必须 prover 的内核检**。神经符号闭环：**LLM（经 IDE sampling）写标注 → prover 放电 → 过了才算证明**；不过则把 prover 的错喂回 LLM 重写（同 ★3 repair 的 generate-and-check）。但 **prover 二进制仍需安装**（或经一个包装 prover 的 MCP 工具间接调用）——这是与"LLM 可用性"正交的外部依赖。
+## 五·一、必须引入 Dafny/Lean 吗？——不必。"数学自己建框架"的三档
+**结论:中间一大档可以零外部、用已内置的 z3 自建,Dafny/Lean 只在最顶档才需要。**
+
+| 档 | 性质范围 | 怎么证 | 要外部吗 |
+|---|---|---|---|
+| **A 可判定** | QF-LIA、数组、位向量、无量词 | **已内置 z3**（★2/契约,现成） | ❌ 零外部 |
+| **B 自建 VCgen + z3**（**本就该先做这档**） | **带不变式的循环、有界量词、简单堆** | **自己写验证条件生成器**,把"循环不变式""前后置"编码成 z3 查询——**这正是 Dafny 内部干的事（Dafny = VCgen + z3）**。z3 本身支持量词实例化,所以自建 VCgen 能覆盖远超直线 QF-LIA | ❌ **零外部**(复用已装 z3) |
+| **C 顶档** | 无界归纳、高阶逻辑、完整函数正确性、终止性证明 | 需**可信内核**（Lean/Coq/Isabelle）或 Dafny/Verus | ✅ 外部 |
+
+**B 档怎么自建（无 Dafny）**:对一个带不变式 `I` 的循环,发**三条 z3 查询**——① `I` 入口成立;② `I ∧ guard ⇒ I'`（体执行后保持,归纳步）;③ `I ∧ ¬guard ⇒ post`。z3 逐条放电。**这就是"用数学自己建框架":VCgen 是纯逻辑构造,z3 已在手,不引 Dafny。** `itp/vcgen.js` 先做这档(把 `★8 unchecked` 里能 invariant 化的提上来),`toDafny` 的逻辑大半可复用成"toZ3-VC"。
+
+**为什么顶档 C 仍劝用外部、不自建内核**:不是"建不出",是**信任本身就是产品**。证明器的**内核**（De Bruijn 判准:小到可独立复核、被数学界审过）是它的皇冠;**自己写内核,一旦有 bug 就"证出"假定理——比不证更糟（假信心）**。Lean/Coq 内核花了数十年挣得信任。所以顶档**借**外部内核;自建只到 B 档（VCgen+z3,z3 的内核已被信任）。
+
+**修订后的 stage-2 刀法**:**刀1 = B 档自建 VCgen + 内置 z3（零外部,先做,覆盖循环不变式/有界量词）**；刀2（可选）= C 档接外部 ITP，只补 z3 真够不着的顶档。这样**零安装坚持得更久**,且直接落实"数学自建框架"。
+
+## 五·二、与 MCP sampling 的关系（关键）
+**MCP sampling 给不了 prover**。sampling 给的是 **LLM**——LLM 可以帮**写**不变式/标注（autoformalization），但**证明必须求解器/内核检**。神经符号闭环:**IDE 的 AI（经 sampling）写不变式 → z3(B 档)或外部 ITP(C 档)放电 → 过了才算证明**;不过把错喂回 LLM 重写（同 ★3 repair）。注意:**B 档的 z3 已内置——LLM 写不变式 + z3 放电,可全程零外部**;只有 C 档才需外部内核。
 
 ## 六、范围与非目标
 - **是**：把已诚实标 `unchecked` 的义务真正放电；可判定档继续走 z3（不退化）；flag-gated、parity。

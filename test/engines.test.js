@@ -278,6 +278,27 @@ test('★6 slice-7 within-file transitive conduit: `return localConduit(..)` is 
   assert.ok(String(vios[0].N).includes('handlers.js:18:sink_xss'))
 })
 
+test('★6 slice-8 passthrough (return-of-tainted-arg): a param→return identity wrapper threads taint into a param-sink (within + cross-file); the JSON guard and a non-passthrough control hold', async () => {
+  const program = buildProgram(await extractProject(root('examples/taint-passthrough'), { lift: 'none' }))
+  // Only `id` returns its formal unchanged → a passthrough. swallow (returns a
+  // constant) and the param-sinks/handlers are NOT passthroughs (sound-leaning).
+  const passthrough = (await runQuery(program, 'param_return(F, I).')).map((r) => `${r.F}/${r.I}`).sort()
+  assert.deepEqual(passthrough, ['app.js::id/0'], 'only the identity wrapper is a passthrough')
+  const vios = await runQuery(program, "violation(N, 'taint-reaches-sink').")
+  const subjects = vios.map((v) => String(v.N)).sort()
+  // render(el, id(name)) — cross-file param-sink (lib.js) reached through a local
+  // passthrough; show(el, id(name)) — the same passthrough into a within-file
+  // param-sink. render(el, swallow(name)) adds NO false positive.
+  assert.equal(vios.length, 2, 'passthrough threads taint into both a cross-file and a within-file param-sink; swallow adds no FP')
+  assert.ok(subjects.some((s) => s.includes('xsink_render')), 'cross-file passthrough→param-sink composes into a virtual sink')
+  assert.ok(subjects.some((s) => s.includes('psink_show')), 'within-file passthrough→param-sink composes too')
+  assert.ok(subjects.every((s) => !s.includes('swallow')), 'a non-passthrough (returns a constant) carries no taint')
+  // replyJson(reply, id(data)) — passthrough into a JSON param-sink: the ★3
+  // content-type guard holds THROUGH the passthrough (Ct=json ⇒ not an HTML sink).
+  const suppressed = (await runQuery(program, 'suppressed_xss(N).')).map((r) => String(r.N))
+  assert.ok(suppressed.some((s) => s.includes('xsink_replyJson')), 'the passthrough→json flow is suppressed, not flagged or silently dropped')
+})
+
 test('★5 semi-naive Datalog engine: bit-identical parity with tau-prolog (reaches/cyclic/dead_code/tainted/impact)', async () => {
   const canon = (rows, fn) => new Set(rows.map(fn))
   const eqSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x))

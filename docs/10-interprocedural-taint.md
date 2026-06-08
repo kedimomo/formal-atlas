@@ -195,9 +195,39 @@ soundness 不变：传递性只在 return 的裸 callee **解析到已证 condui
 
 ## 十二、后续加刀（exploded supergraph 全量 IFDS）
 
-within-file 两刀 + cross-file param-sink + cross-file returns-taint + cross-file 2-hop + 传递 conduit 不动点（跨文件 + 同文件，均含 import 别名解析、content-type 护栏跨跳）已落地。完整 IFDS 仍待：
+within-file 两刀 + cross-file param-sink + cross-file returns-taint + cross-file 2-hop + 传递 conduit 不动点（跨文件 + 同文件，均含 import 别名解析、content-type 护栏跨跳）+ **param→return 透传摘要（第八刀，见 §十三）** 已落地。完整 IFDS 仍待：
 
-- **返回-of-tainted-arg**：`function id(x){return x}` 这类**透传形参**的返回（`return x` 当 x 是形参）——区别于"内部制造污点"的 conduit,是 param→return 摘要,可与 param-sink 摘要合流。
+- ✅ **返回-of-tainted-arg（第八刀，已落地 2026-06-08，见 §十三）**：`function id(x){return x}` 这类**透传形参**的返回（`return x` 当 x 是形参）——区别于"内部制造污点"的 conduit,是 param→return 摘要,已与 param-sink 摘要合流。
 - 最终 **exploded supergraph 上的精确 CFL-可达**（Reps–Horwitz–Sagiv 全量 IFDS），把 conduit/param-sink/return 三类摘要统一成 supergraph 上的 realizable-path 可达。
 
-按真实规模需要再推进；本框架（两遍摘要 + QId `param_sink`/`taint_returns_q` + `taint_arg`/`ret_call`/`ret_returns_call` + 既有 `tainted/2` 闭包 + 调用点/跨文件虚拟汇、source 注入与传递不动点）可增量承载。
+按真实规模需要再推进；本框架（三遍摘要 + QId `param_sink`/`taint_returns_q`/`param_return` + `taint_arg`/`ret_call`/`ret_returns_call` + 既有 `tainted/2` 闭包 + 调用点/跨文件虚拟汇、source 注入与传递不动点）可增量承载。
+
+## 十三、第八刀：return-of-tainted-arg（param→return 透传摘要，与 param-sink 合流，已落地 2026-06-08）
+
+前七刀的摘要有两类：**conduit**（函数**内部制造**污点 → 返回不可信数据）和 **param-sink**（形参**流向**内部汇）。第八刀补上第三类——**透传（passthrough）**：函数把某个**形参原样返回**（`function id(x){ return x }`），既不制造也不消费,而是**承载**——`id(tainted)` 的结果继承实参的污点。这是 IFDS exploded-supergraph 上 param→return 那条摘要边。
+
+```js
+// app.js  : function id(x){ return x }                         // param_return(id,0) 透传
+//           function swallow(x){ return 'constant' }           // 非透传（返回常量）— 对照
+//           const name = req.query.name
+//           render(el, id(name))     // 跨文件 param-sink（lib.js）经本地透传 → 真 XSS
+//           show(el, id(name))       // 同文件 param-sink 经透传 → 真 XSS
+//           replyJson(reply, id(data))  // 透传进 JSON 汇 → 被 ★3 content-type 护栏跨透传抑制
+//           render(el, swallow(name))   // swallow 丢弃形参 → 0 误报
+// lib.js  : export function render(el, html){ el.innerHTML = html }   // param_sink(render,1,xss,html)
+//           export function replyJson(reply, obj){ reply.send(obj) }  // param_sink(replyJson,1,xss,json)
+```
+
+### 实现（第三类摘要 + 复用既有 join，零新规则）
+- **`summarizeParamReturns(code)`（taint-interproc.js）**：第三遍摘要,与 param-sink 同构（FN_DEF 处从形参重播 `pt: var→Set(idx)`）,但盯 `return`：返回表达式**经纯别名（无调用/汇/sanitizer）** mention 某形参派生变量 → 记 `param_return('File::Fn', Idx)`。**sound-leaning**：`return f(x)` 返回 f 的**结果**而非 x（`hasCall(e)` gate 排除）→ 绝不把"洗白器"误标为透传。抽离了共享的 `returnExpr(line)`（剥行尾注释,conduit 与透传两遍同款,消冗余）与 `hasCall(expr)` 到 taint-patterns.js。
+- **折进既有 join，不新增规则/链接代码**：
+  - **同文件 param-sink**：`argSource` 改为**递归/透传感知**——实参是本地透传调用 `id(inner)` 时,递归取其返回形参位 inner 的污点节点 → 复用既有虚拟汇（`show(el, id(name))` 真阳）。嵌套天然组合。
+  - **跨文件 param-sink**：新 `passthroughVarNode` 把 `id(taintedVar)`（本地透传 + 裸污点实参）解析到该变量的**已有**污点节点,在调用点发 `taint_arg(File, Callee, Idx, innerNode)` → `taint-link.js` 第三刀的 join 原样把外层 callee 解析到另一文件的 `param_sink` → 虚拟汇从 innerNode 接出（`render(el, id(name))` 真阳）。
+  - **content-type 护栏跨透传成立**：虚拟汇的 `Ct` 取自外层 param-sink,故 `replyJson(reply, id(data))`（Ct=json）照 ★3 抑制（`replyJson` 被 `suppressed_xss` 记录,非静默丢弃）。
+- **`param_return/2` 声明 `:- dynamic`**：本刀作为**事实惰性**（无规则消费,经 `taint_arg`/虚拟汇间接生效）——供 query/explain 与未来"透传函数本身跨文件"的加刀复用。透传函数当前限**本地**（callee 在另一文件的透传留待下一刀,需 `taint-link` 解析 `param_return`——自然的第九刀）。
+
+### 验证（已落地）
+- 夹具 `examples/taint-passthrough/`（`app.js` 本地透传 `id`/对照 `swallow` + 本地 param-sink `show`；`lib.js` 跨文件 param-sink `render`/`replyJson`）：`param_return` 恰 `app.js::id/0`；`violation` 恰 **2**（跨文件 `xsink_render` + 同文件 `psink_show`），`swallow` 无误报；`suppressed_xss` 含 `xsink_replyJson`（护栏跨透传成立）。
+- 测试 `test/engines.test.js` ★6 slice-8：断言透传集恰 `id`、违规恰 2（跨 + 同文件）、`swallow` 不出现、JSON 透传被抑制。
+- **真实库实测**（`../src/server/routes`、`../src/auth`）：发现 16 条真实透传（`normalizeBool`/`parseJson`/…），但**违规计数逐位不变**（routes 187/41/23、auth 27/9/3，stash 前后一致）→ **新增 0 误报**（紧合取:透传 ∧ param-sink ∧ 污点实参,三者在现网代码未同时命中改变判定）。
+- 回归（实测绿）：sample-project 7、taint 1（sink_sql）、前七刀全部夹具不变；`npm test` 通过（9 smoke + **33** engines + MCP 16-工具自检）。upgrade/rollback-safe（全加性,旧路径未触）。

@@ -21,6 +21,7 @@
 :- dynamic(ret_returns_call/2).
 :- dynamic(taint_arg/4).
 :- dynamic(param_sink/4).
+:- dynamic(param_return/2).
 
 % ★6b param-sink summaries: param_sink(Fn, Idx, Kind, Ct) records that Fn's
 % formal parameter at Idx reaches an internal sink of Kind (Ct = xss
@@ -36,6 +37,14 @@
 % Callee to a QId and, when it is a conduit in ANOTHER file, emits source(Xnode)
 % — so the SAME tainted/2 closure carries it to a sink (the within-file edge from
 % Xnode was already laid down). No new rule: the join reuses source/1.
+
+% slice-8 passthrough summaries: param_return('File::Fn', Idx) records that Fn
+% returns its formal at Idx unchanged (`function id(x){ return x }`). It carries
+% an argument's taint to the call RESULT, so the extractor folds it into the
+% existing joins — a local passthrough call feeding a param-sink emits the same
+% virtual sink (and a JSON wrapper stays suppressed), and id(taintedVar) handed
+% to a cross-file param-sink emits taint_arg with the inner node. Inert as a fact
+% (declared dynamic for query/explain + a future cross-file passthrough join).
 
 % A node is tainted if it is a source, or untrusted data flows into it.
 % (★5: short-circuit when the semi-naive engine has materialized tainted/1 facts.)

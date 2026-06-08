@@ -61,6 +61,24 @@ export function calleeOf(rhs) {
   return m ? m[1] : null
 }
 
+/** True if `expr` contains a function call `name(` (expects a string-blanked expr). */
+export function hasCall(expr) {
+  return /[A-Za-z_$][\w$]*\s*\(/.test(expr)
+}
+
+/**
+ * The cleaned expression a `return` statement yields, or null if the line is not
+ * a return. Strings stay intact (callers blank as needed) but a trailing line
+ * comment is dropped — `return n // note` ⇒ `n`. Shared by the conduit and
+ * passthrough summaries so both treat a return identically.
+ */
+export function returnExpr(line) {
+  const rm = line.match(RETURN)
+  if (!rm) return null
+  const ci = noStr(rm[1]).indexOf('//') // find the comment in a string-blanked copy
+  return (ci >= 0 ? rm[1].slice(0, ci) : rm[1]).trim()
+}
+
 /**
  * Ordered formal-parameter names of the function a line defines (best-effort).
  * Destructured/unparseable params drop out (→ no param-sink summary for them):

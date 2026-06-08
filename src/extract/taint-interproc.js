@@ -12,8 +12,9 @@
  * false XSS (docs/10 §三, §六).
  */
 import {
-  SOURCE, SANITIZER, SINK, FN_DEF, RETURN,
+  SOURCE, SANITIZER, SINK, FN_DEF,
   noStr, mentions, classifyXssCt, fnNameOf, calleeOf, paramsOf, sinkValueExpr,
+  hasCall, returnExpr,
 } from './taint-patterns.js'
 
 const isComment = (line) => !line || line.startsWith('//') || line.startsWith('*')
@@ -49,11 +50,8 @@ export function summarizeReturns(code) {
       if (SANITIZER.test(rhs)) taint.delete(asg[1])
       else if (SOURCE.test(rhs) || [...taint].some((v) => mentions(rhs, v))) taint.add(asg[1])
     }
-    const rm = line.match(RETURN)
-    if (rm && fn) {
-      const blanked = noStr(rm[1]) // strings → '' so a // inside one is not seen as a comment
-      const ci = blanked.indexOf('//')
-      const e = (ci >= 0 ? rm[1].slice(0, ci) : rm[1]).trim() // drop a trailing line comment
+    const e = returnExpr(line)
+    if (e !== null && fn) {
       if ((/^[A-Za-z_]\w*$/.test(e) && taint.has(e)) || (!e.includes('(') && SOURCE.test(noStr(e)))) conduits.add(fn)
       const callee = calleeOf(e)
       if (callee) returnCalls.push([fn, callee]) // transitive candidate (resolved post-link)
@@ -118,6 +116,39 @@ export function summarizeParamSinks(code) {
     }
   }
   return sinks
+}
+
+/**
+ * Pass 1c — param→return PASSTHROUGH summaries (★6 slice-8, "return-of-tainted-arg").
+ * A function is a passthrough at index Idx when it `return`s a value derived — by
+ * pure aliasing, NOT through a call/sink/sanitizer — from its formal at Idx (the
+ * `function id(x){ return x }` shape). Distinct from a conduit (manufactures taint
+ * internally) and from a param-sink (consumes it): a passthrough CARRIES its
+ * argument's taint to the call result, so `id(tainted)` is tainted. Emits
+ * `param_return(Fn, Idx)`. Sound-leaning: a returned CALL result (`return f(x)`)
+ * is f's value, not x, so it is excluded — we never mark a launderer a passthrough.
+ */
+export function summarizeParamReturns(code) {
+  const rets = new Map() // fn -> Set(param idx returned unchanged)
+  let pt = new Map() // var -> Set(param idx it derives from)
+  let fn = null
+  const add = (f, idx) => { if (!rets.has(f)) rets.set(f, new Set()); rets.get(f).add(idx) }
+  for (const raw of code.split('\n')) {
+    const line = raw.trim()
+    if (isComment(line)) continue
+    if (FN_DEF.test(line)) { pt = new Map(); paramsOf(line).forEach((p, i) => pt.set(p, new Set([i]))) }
+    const name = fnNameOf(line)
+    if (name) fn = name
+    const asg = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*(.+?);?$/)
+    if (asg) {
+      const rhs = noStr(asg[2])
+      if (SANITIZER.test(rhs) || hasCall(rhs)) pt.delete(asg[1]) // sanitized, or a call RESULT — not a passthrough of the param
+      else { const idxs = new Set(); for (const [v, s] of pt) if (mentions(rhs, v)) for (const i of s) idxs.add(i); if (idxs.size) pt.set(asg[1], idxs) }
+    }
+    const e = returnExpr(line)
+    if (e !== null && fn) { const eb = noStr(e); if (!hasCall(eb)) for (const [v, s] of pt) if (mentions(eb, v)) for (const i of s) add(fn, i) }
+  }
+  return rets
 }
 
 /**

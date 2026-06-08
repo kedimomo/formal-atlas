@@ -410,6 +410,17 @@ test('★7 points-to interproc arg flow: a callback passed through a dynamic dis
   assert.ok(!evaluate(withoutPT.facts).reaches.has('invoke\ttarget'), 'the name-based linker alone cannot (parity: off = unchanged)')
 })
 
+test('★7 points-to higher-order builtin: a bare-name callback passed to .map/.forEach is resolved into the call graph', async () => {
+  const withPT = await extractProject(root('examples/points-to-hof'), { lift: 'none', pointsToEnabled: true })
+  const withoutPT = await extractProject(root('examples/points-to-hof'), { lift: 'none' })
+  // `users.map(formatUser)` / `users.forEach(logIt)` — the callbacks are invoked by
+  // the builtin, never called by their own name; the name-based linker sees `.map(`.
+  // points-to emits calleeVar(run, formatUser/logIt) → resolves them into reaches.
+  assert.ok(evaluate(withPT.facts).reaches.has('run\tformatUser'), 'the .map callback is resolved into the call graph')
+  assert.ok(evaluate(withPT.facts).reaches.has('run\tlogIt'), 'the .forEach callback is resolved into the call graph')
+  assert.ok(!evaluate(withoutPT.facts).reaches.has('run\tformatUser'), 'the name-based linker alone cannot (parity: off = unchanged)')
+})
+
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {
   // A graph WITH a cycle (a→b→c→a) plus c→d and x→a — stresses ancestors×descendants.
   const edges = [['a', 'b'], ['b', 'c'], ['c', 'a'], ['c', 'd'], ['x', 'a']]

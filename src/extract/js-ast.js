@@ -25,6 +25,9 @@ const SKIP_KEYS = new Set(['type', 'loc', 'start', 'end', 'range'])
 const CRYPTO = /^(sha256|sha512|md5|createHash|createHmac|hashBytes|pbkdf2|scrypt|encrypt|decrypt|sign|verify)$/
 const EXTERNAL = /^(fetch|axios|request|got|XMLHttpRequest|ajax)$/
 const SENSITIVE = /tenant-\d+|^system$|password|secret|api[_-]?key|private[_-]?key|access[_-]?token/i
+// ★7 points-to: higher-order builtins that INVOKE a function-valued arg (arr.map(cb), p.then(cb)).
+const HIGHER_ORDER = new Set(['map', 'forEach', 'filter', 'reduce', 'reduceRight', 'flatMap',
+  'find', 'findIndex', 'findLast', 'some', 'every', 'sort', 'then', 'catch', 'finally'])
 
 function calleeName(node) {
   const c = node.callee
@@ -138,6 +141,11 @@ export function extractJs(fileId, code) {
       if (node.callee?.type === 'Identifier') {
         facts.push(fact('calleeVar', cur(), node.callee.name))
         ;(node.arguments || []).forEach((arg, i) => { if (arg.type === 'Identifier') facts.push(fact('argActual', cur(), i, arg.name)) })
+      }
+      // ★7 points-to: a higher-order builtin (`x.map(cb)`) invokes its callback arg —
+      // emit calleeVar per bare-identifier arg (the engine's isFunction gate drops non-fns).
+      if (node.callee?.type === 'MemberExpression' && HIGHER_ORDER.has(node.callee.property?.name)) {
+        for (const arg of node.arguments || []) if (arg.type === 'Identifier') facts.push(fact('calleeVar', cur(), arg.name))
       }
     }
     // ★7 points-to: `const x = y` identifier aliasing → assign edge.

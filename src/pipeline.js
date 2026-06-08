@@ -13,6 +13,7 @@ import { link } from './link/linker.js'
 import { linkTaint } from './link/taint-link.js'
 import { materialize } from './verify/datalog.js'
 import { pointsTo } from './verify/pointsto/andersen.js'
+import { applyModels } from './models/index.js'
 import { getCached, setCache } from './cache.js'
 import { generateHoareOffline, generateHoareOnline } from './formalize/hoare.js'
 import { generateInvariantsOffline, generateInvariantsOnline } from './formalize/invariant.js'
@@ -48,7 +49,7 @@ export function walkFiles(root) {
   return out
 }
 
-export async function extractProject(root, { lift = 'offline', formalize = 'off', maxFiles = 5000, engine = 'prolog', pointsToEnabled = false } = {}) {
+export async function extractProject(root, { lift = 'offline', formalize = 'off', maxFiles = 5000, engine = 'prolog', pointsToEnabled = false, frameworkEnabled = false } = {}) {
   const files = walkFiles(root).slice(0, maxFiles)
   let facts = []
   const rawLines = []
@@ -100,6 +101,10 @@ export async function extractProject(root, { lift = 'offline', formalize = 'off'
     if (!refFacts.length) refFacts = generateRefinementsOffline(facts)
     facts.push(...refFacts)
   }
+  // stage-1 framework models (docs/15): map http_route signals → entry/calls3 so
+  // route handlers become reachable from their registering scope. Before link() so
+  // the synthetic calls3 is QId-resolved. Opt-in (--framework); off ⇒ bit-identical.
+  if (frameworkEnabled) facts.push(...applyModels(facts))
   // Scope-aware linking: resolve bare-name call edges into a file-qualified
   // graph (decl/node/rcall) so downstream rules stop merging same-name funcs.
   facts.push(...link(facts))

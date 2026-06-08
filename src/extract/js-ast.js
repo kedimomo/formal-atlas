@@ -1,16 +1,10 @@
 /**
- * JavaScript/JSX fact extractor via the `acorn` parser (true AST, not regex).
- *
- * Emits a relational call-graph + structural facts that downstream Prolog rules
- * reason over. `calls/2` uses bare callee names for backward-compatible queries;
- * `calls3/3` additionally records the CALLER's file so the linker (src/link)
- * can resolve each callee to a file-qualified target via `import_binding/4` —
- * which is what eliminates cross-file same-name merging.
- *
- * Predicates produced:
- *   file/2 defines/4 method/1 async_fn/1 param/3 calls/2 calls3/3
+ * JavaScript/JSX fact extractor via `acorn` (true AST, not regex). Emits a
+ * relational call-graph + structural facts for the Prolog rules: `calls/2` is
+ * bare-name, `calls3/3` adds the caller's file so the linker resolves cross-file.
+ * Predicates: file/2 defines/4 method/1 async_fn/1 param/3 calls/2 calls3/3
  *   import_binding/4 imports/2 exports/2 has_loop/2 awaits_in_loop/1
- *   crypto_in_loop/1 calls_external/2 string_lit/3 addr_taken/2
+ *   crypto_in_loop/1 calls_external/2 string_lit/3 addr_taken/2 http_route/4
  */
 import * as acorn from 'acorn'
 import { fact } from '../lift/fact-model.js'
@@ -149,6 +143,12 @@ export function extractJs(fileId, code) {
       }
       // ★7 field-sensitive: a member call on an object-literal var (`h.foo()`/`h[k]()`) is a dispatch-table call.
       if (node.callee?.type === 'MemberExpression' && node.callee.object?.type === 'Identifier' && objLitVars.has(node.callee.object.name)) facts.push(fact('field_call', cur(), node.callee.object.name, node.callee.computed ? '*' : node.callee.property?.name))
+      // stage-1 framework model: app.METHOD(path[,opts], handler) — record the route handler (inert; src/models activates it under --framework).
+      if (node.callee?.type === 'MemberExpression' && /^(app|fastify|router|server)$/.test(node.callee.object?.name) && /^(get|post|put|delete|patch|all|head|options|addHook)$/.test(node.callee.property?.name)) {
+        const h = node.arguments?.[node.arguments.length - 1]
+        const hn = h?.type === 'Identifier' ? h.name : (FN_TYPES.has(h?.type) ? `anon@${h.loc?.start?.line ?? 0}` : null)
+        if (hn) facts.push(fact('http_route', fileId, cur(), node.callee.property.name, hn))
+      }
     }
     // ★7 points-to: `const x = y` aliasing → assign; `const h = {k: fn}` → field_store (dispatch table).
     if (node.type === 'VariableDeclarator' && node.id?.type === 'Identifier') {

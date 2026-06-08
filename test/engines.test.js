@@ -433,6 +433,20 @@ test('★7 points-to field-sensitive: an object-literal dispatch table indexed b
   assert.ok(!evaluate(withoutPT.facts).reaches.has('dispatch\tcreateHandler'), 'the name-based linker alone cannot resolve the computed dispatch (parity: off = unchanged)')
 })
 
+test('stage-1 framework model: Fastify route handlers become reachable from the registration entry (--framework)', async () => {
+  const on = buildProgram(await extractProject(root('examples/framework-fastify'), { lift: 'none', frameworkEnabled: true }))
+  const off = buildProgram(await extractProject(root('examples/framework-fastify'), { lift: 'none' }))
+  // app.get('/items', async(req)=>dbWrite(..)) + app.post('/items', {..}, namedHandler).
+  // Handlers are invoked by the framework; without a model dbWrite/audit aren't
+  // reachable from registerRoutes. --framework emits calls3(registerRoutes→handler).
+  const httpEntry = (await runQuery(on, 'http_entry(H).')).map((r) => String(r.H)).sort()
+  assert.equal(httpEntry.length, 2, 'both route handlers (inline + named) are HTTP entries')
+  assert.ok(httpEntry.includes('namedHandler'), 'the named handler is marked an HTTP entry')
+  assert.equal((await runQuery(on, "reaches('registerRoutes', 'dbWrite').")).length, 1, 'with --framework the inline handler reaches dbWrite from the registration entry')
+  assert.equal((await runQuery(off, "reaches('registerRoutes', 'dbWrite').")).length, 0, 'without --framework the handler is unreachable (parity: off = unchanged)')
+  assert.equal((await runQuery(on, "reaches('registerRoutes', 'audit').")).length, 1, 'the named handler reaches audit too')
+})
+
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {
   // A graph WITH a cycle (a→b→c→a) plus c→d and x→a — stresses ancestors×descendants.
   const edges = [['a', 'b'], ['b', 'c'], ['c', 'a'], ['c', 'd'], ['x', 'a']]

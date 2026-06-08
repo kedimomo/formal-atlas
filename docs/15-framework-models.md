@@ -36,8 +36,8 @@ app.get('/api/abac/rules', { preHandler: [requireAuth] }, async (req, res) => { 
 - 集成:`pipeline.js` 在 `link()` 后跑 `applyModels`（需 decl/QId）；flag `--framework`（默认关,parity-safe）。CLI/MCP 暴露。
 
 ## 五、刀 plan（framework-model）
-- **刀1**:`app.METHOD(path[,opts],handler)` → `entry(handler)` + 合成 `calls3('__http__'→handler)` + `source(req)`。夹具:一个路由文件;实测 `reaches('__http__', dbQuery)` 出现、handler 不再孤立。**最高即时收益**。
-- **刀2**:钩子链 `opts.preHandler`/`onRequest` + 全局 `addHook` → `calls3(handler→hook)`、auth/rebac 钩子进图被分析（安全核心可达性）。
+- **✅ 刀1（已落地 2026-06-09）**:`app.METHOD(path[,opts],handler)`（handler=末位实参,具名 Identifier 或内联箭头 `anon@line`）→ 抽取发 inert `http_route(file,scope,method,handler)`；`src/models/{index,fastify}.js` 在 `--framework` 下 `applyModels` 把它转成 `calls3(scope→handler)`+`entry(handler)`+`http_entry(handler)`（pipeline 在 `link()` 前跑,合成 calls3 被 QId 化成 rcall）。夹具 `examples/framework-fastify/` + 1 测试（engines 39）。**真实库实测（`../src/server/routes`）**:模型化 **271 个 HTTP 入口**、`reaches` **5585→8671（+3086 边）**——对比 points-to +11、字段敏感 +0,**框架模型是本库的高杠杆**,论点证实。parity-safe:`--framework` 关时 routes 187/sample 7/taint 1 位等价（http_route inert）。`source(req)` 暂未发（现有 `req.query` 已在 handler 体内命中;入口源标注留刀2 与污点联动）。
+- **刀2**:钩子链 `opts.preHandler`/`onRequest` + 全局 `addHook` → `calls3(handler→hook)`、auth/rebac 钩子进图被分析（安全核心可达性）；handler 第0参 `req` 作确认入口污点源。
 - **刀3**:`app.route({handler,preHandler})` 字段式 + `app.register` 子作用域；models-as-data 化,加 Express/Koa 仅加数据。
 - 每刀:夹具 + parity（`--framework` 关时位等价）+ 真实库实测（reaches/impact 入口可达性↑、handler dead-code FP→0）。
 

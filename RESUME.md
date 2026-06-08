@@ -1,6 +1,6 @@
 # RESUME — 下次从这里继续
 
-> 本次会话存档点（2026-06-08，**★6 刀8/刀9 + ★7 实参流/builtin/字段敏感 + ★5 DRed + ★8/IFDS spec + 合并 push**）。**★6 刀8** return-of-tainted-arg（`param_return` 透传摘要）；**★6 刀9** 跨文件透传函数（`pass_arg/6`）；**★7** 过程间实参流（`argActual`/`formalParam`,二阶回调）+ **builtin 回调**（`arr.map(cb)`,routes +11 reaches）+ **字段敏感 points-to 刀1**（`pointsto/andersen.js`,`field_store`/`field_call` 解 dispatch-table）；**★5** `deleteEdge`（局部化 DRed,补全 watch add+delete 基元）；**spec `docs/13`（ITP 放电）+ `docs/14`（IFDS+字段敏感 两块引擎大件,含 `src/verify/` 子目录方案）**；**★1–★7 已合并进 `main` 并 push origin**。所有 points-to 改动 behind `--points-to`、默认 routes 187/taint 1/sample 7 位等价。**诚实落点**:本库动态分派**框架中介**（Fastify 路由/回调,`field_call`=0）,语言级 points-to 增益有限。本文件 + 自动记忆（`formal-atlas-subsystem.md`）共同记录"我停在哪、下一步做什么"。
+> 本次会话存档点（2026-06-09，**框架模型 刀1 + ITP 自建-tier spec + 三阶段 plan**）。承上批（★6 刀8/9、★7 实参流/builtin/字段敏感、★5 DRed、全部已合并 push）。本批：**① 实现"阶段一"框架模型感知 刀1**（`src/models/{index,fastify}.js`,`--framework`：`app.METHOD(path[,opts],handler)` → `http_route` → `calls3(scope→handler)`+`entry`+`http_entry`；实测 routes **271 HTTP 入口、reaches +3086 边**——本库高杠杆论点证实；parity-safe 默认 routes 187/sample 7/taint 1 位等价）；**② 回答"阶段二必须用 Dafny/Lean 吗"=否**（`docs/13 §五·一` 三档:A 内置 z3 / **B 自建 VCgen+内置 z3 零外部** / C 顶档才需外部内核——"数学自建框架"在 B 档成立）；**③ 三阶段具体计划已存**（`docs/15` 框架模型 + `docs/13` ITP + `docs/14` IFDS,含刀法/文件布局/执行序）。engines 39。本文件 + 自动记忆（`formal-atlas-subsystem.md`）共同记录"我停在哪、下一步做什么"。
 
 ## 当前所在分支
 **`main`**（★1–★7 全部工作已 **fast-forward 合并进 main 并 push 到 origin**，2026-06-08）。`star2-refinement-types` 与 main 同点、也已 push。`main` 与 `origin/main` 同步（0 偏离）。后续工作可直接在 main 或新开分支。
@@ -13,7 +13,7 @@
 ## 验证（确认存档可跑）
 ```bash
 cd formal-atlas
-npm test                                                  # 9 smoke + 38 engines(★2/★3/★4/★5/★6/★7) + MCP 16-工具自检,全绿
+npm test                                                  # 9 smoke + 39 engines(★2/★3/★4/★5/★6/★7) + MCP 16-工具自检,全绿
 node src/cli.js smt faithfulness examples/faithfulness/abs.faithful.json   # ✅ faithful + round-trip ✅ equivalent
 node src/cli.js verify examples/taint-interproc            # ★6 刀1：getName→innerHTML 跨调用真阳；rows()/consume 无误报
 node src/cli.js verify examples/taint-paramsink            # ★6 刀2：render(html)/runSql(sql) 真阳 2 条；sendJson(json) 抑制 1 条
@@ -31,7 +31,7 @@ node src/cli.js verify  ../src/server/routes              # ★3+★6：直接 s
 
 ## 下一步：★1–★4 主线 + ★6 九刀已完成,余为"按需"的规模/精度工程（06-frontier-map 5–8）
 
-> **🎯 推荐执行序（2026-06-08 实测修正,详见 `docs/15`）= 框架模型 → ITP 放电 → 完整 IFDS。** 实测反复证明:语言级引擎（points-to/IFDS）在本库**已够精（误报 0）**,缺口在 **① 框架中介调用**（Fastify 450 路由/钩子,`field_call`=0 根因）和 **② 未证安全核心**。故 **①框架模型感知（`docs/15`,新顶层 `src/models/`,补 `entry`/合成 `calls3`/`source(req)` → 解锁"HTTP→汇"安全可达,本库高收益）** 第一；**②ITP 放电（`docs/13`,`toDafny` VC 已生成、缺接 prover）** 第二（安全核心）；**③完整 IFDS（`docs/14`,realizable-path 精度）** 第三（本库误报已 0、边际低）。**不是**继续堆 points-to/IFDS 精度。
+> **🎯 推荐执行序（2026-06-08 实测修正,详见 `docs/15`）= 框架模型 → ITP 放电 → 完整 IFDS。** 实测反复证明:语言级引擎（points-to/IFDS）在本库**已够精（误报 0）**,缺口在 **① 框架中介调用**（Fastify 450 路由/钩子,`field_call`=0 根因）和 **② 未证安全核心**。**✅ ①框架模型 刀1 已落地（2026-06-09,`src/models/`,`--framework`）**:模型化 routes **271 HTTP 入口**、`reaches` **+3086 边**（vs points-to +11、字段敏感 +0）——**高杠杆论点证实**;余刀2（钩子链+req 源）、刀3（route({})/register/models-as-data）。**②ITP 放电（`docs/13`）**:刀1=**自建 VCgen + 内置 z3（零外部,见 `docs/13 §五·一`）**,刀2=外部 ITP 仅顶档。**③完整 IFDS（`docs/14`）** 第三（本库误报已 0、边际低）。**不是**继续堆 points-to/IFDS 精度。
 
 - **★6 过程间污点·九刀已实现**（`docs/10-interprocedural-taint.md`）：
   - **刀1（tainted-RETURN 摘要）**：`summarizeReturns` 给 within-file tainted-RETURN 摘要——`const x = helper(req)` 当 helper 返回不可信数据时跨调用污染 x（sound-leaning，`return db.query(arg)` 这类返回"结果而非输入"的不算 conduit）。发 `taint_returns(Fn)`；夹具 `examples/taint-interproc/`。

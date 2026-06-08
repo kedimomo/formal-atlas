@@ -30,6 +30,9 @@ node src/cli.js verify  ../src/server/routes              # ★3+★6：直接 s
 回归：`verify examples/sample-project` 仍 7 条违规；taint smoke 仍 1 条 `sink_sql`。
 
 ## 下一步：★1–★4 主线 + ★6 九刀已完成,余为"按需"的规模/精度工程（06-frontier-map 5–8）
+
+> **🎯 推荐执行序（2026-06-08 实测修正,详见 `docs/15`）= 框架模型 → ITP 放电 → 完整 IFDS。** 实测反复证明:语言级引擎（points-to/IFDS）在本库**已够精（误报 0）**,缺口在 **① 框架中介调用**（Fastify 450 路由/钩子,`field_call`=0 根因）和 **② 未证安全核心**。故 **①框架模型感知（`docs/15`,新顶层 `src/models/`,补 `entry`/合成 `calls3`/`source(req)` → 解锁"HTTP→汇"安全可达,本库高收益）** 第一；**②ITP 放电（`docs/13`,`toDafny` VC 已生成、缺接 prover）** 第二（安全核心）；**③完整 IFDS（`docs/14`,realizable-path 精度）** 第三（本库误报已 0、边际低）。**不是**继续堆 points-to/IFDS 精度。
+
 - **★6 过程间污点·九刀已实现**（`docs/10-interprocedural-taint.md`）：
   - **刀1（tainted-RETURN 摘要）**：`summarizeReturns` 给 within-file tainted-RETURN 摘要——`const x = helper(req)` 当 helper 返回不可信数据时跨调用污染 x（sound-leaning，`return db.query(arg)` 这类返回"结果而非输入"的不算 conduit）。发 `taint_returns(Fn)`；夹具 `examples/taint-interproc/`。
   - **刀2（参数→形参反向 / param-sink）**：`summarizeParamSinks` 给 `param_sink('File::Fn',Idx,Kind,Ct)` 摘要——只测 `sinkValueExpr` 的危险值位置、**排除接收者**（db/res/reply）；调用点发**虚拟汇**复用既有 `violation`/`html_safe`，故 **Ct=json 包装器在过程间被原样抑制**（不倒回 ★3）。夹具 `examples/taint-paramsink/`。

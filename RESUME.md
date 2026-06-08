@@ -1,10 +1,9 @@
 # RESUME — 下次从这里继续
 
-> 本次会话存档点（2026-06-08，**★6 第八/九刀 + ★7 过程间实参流** 三连）。**★6 刀8** return-of-tainted-arg（`param_return` 透传摘要,与 param-sink 合流）；**★6 刀9** 跨文件透传函数（`pass_arg/6` + post-link `param_return` 解析,跨文件→跨/同文件外层都真阳,JSON 仍抑制）；**★7** 过程间实参流（`js-ast.js` 发 `argActual`/`formalParam`,引擎按 idx 配 actual↔formal 铺 assignEdge,**二阶解析**回调经动态分派传入后再被调亦解析）。三者均 sound-leaning、真实库 routes/auth 违规计数逐位不变（0 新误报）。本文件 + 自动记忆（`formal-atlas-subsystem.md`）共同记录"我停在哪、下一步做什么"。
+> 本次会话存档点（2026-06-08，**★6 刀8/刀9 + ★7 实参流/builtin 回调 + ★5 DRed 删边 + 文档刷新 + 合并 push**）。**★6 刀8** return-of-tainted-arg（`param_return` 透传摘要）；**★6 刀9** 跨文件透传函数（`pass_arg/6` + post-link 解析）；**★7** 过程间实参流（`argActual`/`formalParam`,二阶回调解析）+ **高阶 builtin 回调**（`arr.map(cb)`,实测 routes +11 reaches 边）；**★5** 增量闭包 `deleteEdge`（局部化 DRed,补全 add+delete watch 基元）；**README/frontier-map 刷新**到现状；**★1–★7 全部 fast-forward 合并进 `main` 并 push 到 origin**。所有 points-to 改动 behind `--points-to`、默认模式 routes 187/taint 1/sample 7 位等价。本文件 + 自动记忆（`formal-atlas-subsystem.md`）共同记录"我停在哪、下一步做什么"。
 
 ## 当前所在分支
-**`star2-refinement-types`**（main 是默认分支；★2/★3/★4/★6 + 累积 WIP 都在此分支，安全可回退）。
-回到主线：`git checkout main && git merge star2-refinement-types`（如果你认可这批改动）。
+**`main`**（★1–★7 全部工作已 **fast-forward 合并进 main 并 push 到 origin**，2026-06-08）。`star2-refinement-types` 与 main 同点、也已 push。`main` 与 `origin/main` 同步（0 偏离）。后续工作可直接在 main 或新开分支。
 
 ## 已完成：★1–★4 神经符号主线全部收口
 - **★2 精化类型**（`07-refinement-layer.md`）：`refinement(R,Var,φ,pre|post)` + 复用 `checkContract` 判 `φ_pre⇒φ_post`，四档 entailed/broken/vacuous/unchecked。
@@ -14,7 +13,7 @@
 ## 验证（确认存档可跑）
 ```bash
 cd formal-atlas
-npm test                                                  # 9 smoke + 35 engines(★2/★3/★4/★5/★6/★7) + MCP 16-工具自检,全绿
+npm test                                                  # 9 smoke + 37 engines(★2/★3/★4/★5/★6/★7) + MCP 16-工具自检,全绿
 node src/cli.js smt faithfulness examples/faithfulness/abs.faithful.json   # ✅ faithful + round-trip ✅ equivalent
 node src/cli.js verify examples/taint-interproc            # ★6 刀1：getName→innerHTML 跨调用真阳；rows()/consume 无误报
 node src/cli.js verify examples/taint-paramsink            # ★6 刀2：render(html)/runSql(sql) 真阳 2 条；sendJson(json) 抑制 1 条
@@ -51,5 +50,5 @@ node src/cli.js verify  ../src/server/routes              # ★3+★6：直接 s
 ## 待办尾巴（可选，低优先）
 - 真机 `repair --online` / `roundTrip` 在线（需 `ANTHROPIC_API_KEY` 或 IDE MCP 采样）跑一遍。
 - ✅ **已做（2026-06-07）**：把 ★3 `sink_ct` 分诊接到 `fdrs-deep-signal`。改在**父仓** `tools/lint/fdrs-deep-signal.js`：`DEEP_PILLAR` 加 `taint-reaches-sink → boundary(P6)`(注入=跨数据信任边界);因 ★3 抑制已在 `violation` 规则内,只有真阳回流(实测 routes 文件 1 真阳,非 7);并查询 `suppressed_xss/1` 把抑制数作 `suppressedXss` 字段 + 理由行**显式回流**(让 FDRS 看见"压掉了几个假 XSS"，不是漏掉)。端到端 `fdrs-synthesize --deep` 贯通、`fdrs-synthesis-proposal` 优雅消费、默认目标 auth/policy 行为不变。**注意:此改动在父仓(分支 `hid-fido-enum`)、尚未提交**——formal-atlas 自身未动。
-- 本分支尚 **未 push、未 merge 到 main**（沿用 ★2 checkpoint 纪律）。
+- ✅ **已合并 + 已 push（2026-06-08）**：★1–★7 全部工作 fast-forward 合并进 `main` 并 push 到 `origin/main`（`dac8cfc..aecc66a`）；`star2-refinement-types` 也已 push。checkpoint 纪律的"未 push/未 merge"已了结。
 - 旁注：`formal-atlas/.trae/` 下有若干**与 ★ 系列无关的 micro-forge 规划稿**（未跟踪），历次提交都刻意排除，勿混入。

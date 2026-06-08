@@ -88,6 +88,7 @@ export function extractJs(fileId, code) {
   let loopDepth = 0
   const definedRoutines = new Set()
   const valueRefs = new Set()
+  const objLitVars = new Set() // ★7 field: vars bound to an object literal holding ≥1 function
 
   function visit(node, parent) {
     let poppedScope = false
@@ -135,9 +136,8 @@ export function extractJs(fileId, code) {
         if (CRYPTO.test(cn) && loopDepth > 0) facts.push(fact('crypto_in_loop', cur()))
         if (EXTERNAL.test(cn)) facts.push(fact('calls_external', cur(), cn))
       }
-      // ★7 points-to: a call through a bare identifier (incl. a variable holding a
-      // function) — resolved to its points-to set, catching dynamic dispatch. The
-      // identifier ARGUMENTS are the actuals for the interprocedural arg→formal flow.
+      // ★7 points-to: a bare-identifier call (incl. a var holding a function) resolves via
+      // points-to (dynamic dispatch); its identifier ARGUMENTS are the interproc actuals.
       if (node.callee?.type === 'Identifier') {
         facts.push(fact('calleeVar', cur(), node.callee.name))
         ;(node.arguments || []).forEach((arg, i) => { if (arg.type === 'Identifier') facts.push(fact('argActual', cur(), i, arg.name)) })
@@ -147,10 +147,13 @@ export function extractJs(fileId, code) {
       if (node.callee?.type === 'MemberExpression' && HIGHER_ORDER.has(node.callee.property?.name)) {
         for (const arg of node.arguments || []) if (arg.type === 'Identifier') facts.push(fact('calleeVar', cur(), arg.name))
       }
+      // ★7 field-sensitive: a member call on an object-literal var (`h.foo()`/`h[k]()`) is a dispatch-table call.
+      if (node.callee?.type === 'MemberExpression' && node.callee.object?.type === 'Identifier' && objLitVars.has(node.callee.object.name)) facts.push(fact('field_call', cur(), node.callee.object.name, node.callee.computed ? '*' : node.callee.property?.name))
     }
-    // ★7 points-to: `const x = y` identifier aliasing → assign edge.
-    if (node.type === 'VariableDeclarator' && node.id?.type === 'Identifier' && node.init?.type === 'Identifier') {
-      facts.push(fact('assign', node.id.name, node.init.name))
+    // ★7 points-to: `const x = y` aliasing → assign; `const h = {k: fn}` → field_store (dispatch table).
+    if (node.type === 'VariableDeclarator' && node.id?.type === 'Identifier') {
+      if (node.init?.type === 'Identifier') facts.push(fact('assign', node.id.name, node.init.name))
+      else if (node.init?.type === 'ObjectExpression') { objLitVars.add(node.id.name); for (const p of node.init.properties || []) if (p.type === 'Property' && p.value?.type === 'Identifier') facts.push(fact('field_store', node.id.name, p.key?.name || String(p.key?.value), p.value.name)) }
     }
     if (node.type === 'AwaitExpression' && loopDepth > 0) facts.push(fact('awaits_in_loop', cur()))
     if (node.type === 'ImportDeclaration') {
@@ -190,11 +193,8 @@ export function extractJs(fileId, code) {
   }
 
   visit(ast, null)
-  // Lightweight points-to: a defined routine whose name appears as a VALUE
-  // (passed as arg / assigned / returned / put in an array or object) is
-  // "address-taken" — reachable indirectly, so NOT dead even if never called
-  // by bare name. This removes the dead-code false positives for callbacks
-  // and dispatch-table functions. File-scoped so the linker keys it precisely.
+  // Lightweight points-to: a defined routine used as a VALUE (arg/assign/return/array/object)
+  // is "address-taken" — reachable indirectly, NOT dead even if never called by bare name.
   for (const name of definedRoutines) if (valueRefs.has(name)) facts.push(fact('addr_taken', fileId, name))
   return facts
 }

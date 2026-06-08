@@ -17,7 +17,7 @@ import { repairViolations, verifyPatch } from '../src/repair/loop.js'
 import { scoreFaithfulness, equiv } from '../src/verify/faithfulness.js'
 import { parseExpr, evalExpr } from '../src/verify/smt-dsl.js'
 import { evaluate } from '../src/verify/datalog.js'
-import { pointsTo } from '../src/verify/points-to.js'
+import { pointsTo } from '../src/verify/pointsto/andersen.js'
 import { closureFromEdges, deleteEdge } from '../src/verify/closure-delta.js'
 
 const ref = (routine, v, phi, kind) => ({ pred: 'refinement', args: [routine, v, phi, kind] })
@@ -419,6 +419,18 @@ test('★7 points-to higher-order builtin: a bare-name callback passed to .map/.
   assert.ok(evaluate(withPT.facts).reaches.has('run\tformatUser'), 'the .map callback is resolved into the call graph')
   assert.ok(evaluate(withPT.facts).reaches.has('run\tlogIt'), 'the .forEach callback is resolved into the call graph')
   assert.ok(!evaluate(withoutPT.facts).reaches.has('run\tformatUser'), 'the name-based linker alone cannot (parity: off = unchanged)')
+})
+
+test('★7 points-to field-sensitive: an object-literal dispatch table indexed by a computed key resolves to all its handlers', async () => {
+  const withPT = await extractProject(root('examples/points-to-fields'), { lift: 'none', pointsToEnabled: true })
+  const withoutPT = await extractProject(root('examples/points-to-fields'), { lift: 'none' })
+  // const handlers = { create: createHandler, delete: deleteHandler }; handlers[k]()
+  // — a computed dispatch the name-based linker can't connect. Field-sensitivity
+  // stores each fn at its field and resolves the [k] call to ALL of them.
+  const r = evaluate(withPT.facts).reaches
+  assert.ok(r.has('dispatch\tcreateHandler') && r.has('dispatch\tdeleteHandler'), 'both dispatch-table handlers resolved into the call graph')
+  assert.ok(r.has('direct\trunOp'), 'a non-computed member call `ops.run()` on an object-literal var resolves too')
+  assert.ok(!evaluate(withoutPT.facts).reaches.has('dispatch\tcreateHandler'), 'the name-based linker alone cannot resolve the computed dispatch (parity: off = unchanged)')
 })
 
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {

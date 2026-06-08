@@ -9,6 +9,7 @@
  * Base relations (emitted by the extractor under --points-to):
  *   alloc(Var,Obj) · assign(To,From) · calleeVar(Site,Var) · isFunction(Obj)
  *   argActual(Site,Idx,Actual) · formalParam(Fn,Idx,Formal)
+ *   field_store(Base,Key,Val) · field_call(Site,Base,Key)   (★7 field-sensitive, docs/14)
  * Computes:
  *   pts:      Map<Var, Set<Obj>>       — what each var may point to
  *   resolved: Set<'Site\tFn'>          — resolvedCall: a var-call resolved to Fn
@@ -27,6 +28,8 @@ export function pointsTo(facts) {
   const sitesOfVar = new Map() // var -> Set(site)   (calleeVar, indexed)
   const argActual = new Map() // site -> Map(idx -> Set(actual))
   const formalParam = new Map() // fn -> Map(idx -> Set(formal))
+  const storesByBase = new Map() // ★7 field: base -> Map(key -> Set(valVar))   (`const h={k:fn}`)
+  const fieldCalls = [] // ★7 field: { site, base, key } — `h[k]()` / `h.foo()` dispatch-table call
   const fwd = new Map() // assignEdge: From -> Set(To)
   const addEdge = (to, from) => {
     if (!fwd.has(from)) fwd.set(from, new Set())
@@ -45,6 +48,8 @@ export function pointsTo(facts) {
       sitesOfVar.get(a[1]).add(a[0])
     } else if (pred === 'argActual') pushNested(argActual, a[0], a[1], a[2])
     else if (pred === 'formalParam') pushNested(formalParam, a[0], a[1], a[2])
+    else if (pred === 'field_store') pushNested(storesByBase, a[0], a[1], a[2])
+    else if (pred === 'field_call') fieldCalls.push({ site: a[0], base: a[1], key: a[2] })
   }
 
   const pts = new Map()
@@ -83,6 +88,16 @@ export function pointsTo(facts) {
         }
       }
     }
+  }
+  // ★7 field-sensitive dispatch tables (docs/14, first cut — alias-unaware on the
+  // base, value resolved through pts): `const h={k:fn}` (field_store) + `h[k]()`
+  // (field_call) → resolve every function the matching field(s) may hold. Runs after
+  // the base fixpoint so pts(val) is final. '*' key (computed `h[k]`) matches all fields.
+  for (const { site, base, key } of fieldCalls) {
+    const fields = storesByBase.get(base)
+    if (!fields) continue
+    const keys = key === '*' ? [...fields.keys()] : [key]
+    for (const k of keys) for (const val of (fields.get(k) || [])) for (const fn of (pts.get(val) || [])) if (isFn.has(fn)) resolved.add(`${site}\t${fn}`)
   }
   return { pts, resolved }
 }

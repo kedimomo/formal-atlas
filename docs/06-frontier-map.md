@@ -16,17 +16,17 @@
 | 组合/功能性质 | ✅ z3:契约蕴含证明/反例、RBAC 职责分离 SAT/UNSAT | `src/verify/smt-bridge.js`、`smt-dsl.js` |
 | 跨语言 | ✅ acorn(JS 深)+ tree-sitter(Py/Go/Java/Rust/TS)+ 正则兜底 | `src/extract/` |
 | 回流 FDRS | ✅ deep→shallow 概念桥 + 深事实信号源(`fdrs-synthesize --deep`) | `src/integrations/fdrs-bridge.js` |
-| 独立、针对任意项目、可分发 | ✅ 零安装;已发布 npm `formal-atlas@0.1.0` + GitHub;MCP server + Claude Code 插件;14 测试 | `README.md`、`mcp/`、`plugin/` |
+| 独立、针对任意项目、可分发 | ✅ 零安装;已发布 npm `formal-atlas@0.2.1` + GitHub;MCP server(16 工具) + Claude Code 插件;9 smoke + 37 engines 测试 + MCP 自检 | `README.md`、`mcp/`、`plugin/` |
 | 数学基础 + 全球文献 | ✅ Curry–Howard–Lambek/抽象解释/Datalog/Rice(`01`)+ 深化(`05`)+ 40+ 文献(`references`) | `docs/` |
 
 > 定位:你的设想 ≈「Doop/CodeQL 式声明式分析」×「LLM autoformalization」×「FDRS 治理」。它**不是**任何一个 arXiv "Atlas",最像 CodeQL/Doop(符号侧)+ Chiasmus(神经符号侧);与 Logos Research 是"分析式 vs 合成式"的正交互补。详见 [`03-atlas-comparison.md`](./03-atlas-comparison.md)。
 
 ### 已诚实记录的边界(= 前沿入口)
-1. **指向分析**:反射/高阶/动态分派未解析;作用域 import 绑定 + points-to **仅 JS**(非 JS 走"本地 + 全局唯一"较松解析)。
-2. **污点分析**:**行级/文件内启发式**,无跨过程精确流(CWE-89/79)。
-3. **LLM 事实**:启发式、**需复核**;NL 契约的形式化是 autoformalization 难题(`05 §13`)。
-4. **SMT 契约**:只在用可形式化 DSL 表达时可判定;自然语言契约够不着。
-5. **规模**:tau-prolog 在大库(10K+ 事实)可能慢;事实库未持久化。
+1. **指向分析**:变量持函数/动态分派、过程间实参流(二阶回调)、高阶 builtin 回调(`arr.map(cb)`)**已由 Andersen points-to 解析**(behind `--points-to`);**余**:字段敏感 dispatch-table(`handlers[k]()`)、反射、上下文敏感;import 绑定 + points-to **仅 JS**(非 JS 走"本地 + 全局唯一"较松解析)。
+2. **污点分析**:**已过程间**(★6 九刀,conduit/param-sink/param→return 三类摘要双向跨文件 + content-type 护栏,0 误报);**余**:完整 exploded-supergraph 精确 realizable-path(IFDS)。
+3. **LLM 事实**:启发式、**需复核**;NL 契约的形式化是 autoformalization 难题(`05 §13`);在线 `repair`/`roundTrip` 需 `ANTHROPIC_API_KEY`。
+4. **SMT 契约**:只在用可形式化 DSL 表达时可判定;自然语言契约够不着。**全 ITP 放电(Dafny/Verus/Lean)未接**(#8,需外部工具链)。
+5. **规模**:tau-prolog 在大库慢 → **已由 #5 半朴素引擎解决**(110–1238×;增量闭包 add+delete 就绪);事实库未持久化。
 
 ---
 
@@ -40,9 +40,9 @@
 | **★2 ✅** | **精化类型层(已完成 2026-06-07)** | 严谨 | 已新增 `refinement(R, Var, φ, pre\|post)` 事实 + z3 判定 `φ_pre ⇒ φ_post`,四档裁决(entailed/broken+反例/vacuous/unchecked);CLI `refine`+`smt refinement`、MCP `refine` 工具、6 测试。见 [`07-refinement-layer.md`](./07-refinement-layer.md) | **已集成 z3**、`smt-dsl.js`、`smt-bridge.checkContract`(零重写复用) | 中 | `05 §11`(Liquid Types)、`05 §10`(λ-立方体可判定角) |
 | **★3 ✅** | **反例驱动修复 + 证明树解释（已完成 2026-06-07）** | 闭环 | 已新增 `src/verify/explain.js`（证明树：污点 `tainted_path/3` 给源→汇链、refinement 拎 z3 反例）+ `src/repair/{feedback,loop}.js`（LLM 候选 → 应用到临时副本 → 重抽取重校验 → 计数下降且无回归才接受；离线诚实降级 `needs-llm`）。先决可判定分诊：`sink_ct/2` 内容类型精化压掉 ~92 假 XSS。CLI `explain`/`repair`、MCP 第 14/15 工具、4 测试。见 [`08-closed-loop.md`](./08-closed-loop.md) | tau-prolog、z3、`llm/`、★2 的 `broken` 反例 | 中 | `05 §13`(证伪式闭环)、Chiasmus derivation-trace |
 | **★4 ✅** | **规约忠实度评测（已完成 2026-06-07）** | 严谨/闭环 | 已新增 `src/verify/faithfulness.js`：`scoreFaithfulness` 用带标签样例 `evalExpr`（QF-LIA 可判定、零 LLM）打忠实分,逮 too-weak/too-strong;`equiv` 复用 `checkContract` 双向撑 `roundTrip`(LLM 复述→再形式化→z3 判等价)。CLI `smt faithfulness`、MCP 第 16 工具、5 测试。见 [`09-faithfulness.md`](./09-faithfulness.md) | `examples/`、`formalize/`、`checkContract` | 中 | `05 §13`(忠实度无法证明、只能证伪) |
-| 5 ◑ | **规模引擎（spec 完成 2026-06-07）** | 规模 | **spec [`11-scale-engine.md`](./11-scale-engine.md)**：profiling 证 solve 占 85%、瓶颈是传递闭包(`cyclic` 52.8s)；零安装纯 JS **半朴素** 原型 16ms vs tau-prolog 52.7s ≈ **3300×** → 答案是**零安装半朴素 Datalog 引擎**(非原生 Soufflé,后者破坏零安装)。待实现 `src/verify/datalog.js`(混合物化 + parity) | 事实库、`watch.js`、`cache.js` | 中高 | `05 §9`(PTIME 数据复杂度);增量 = 最小不动点的 IVM |
-| 6 ◑ | **IFDS/CFL-可达 污点（七刀已实现 2026-06-07）** | 规模/精度 | within-file RETURN 摘要(刀1)+ param-sink(刀2,content-type 护栏)+ 跨文件 param-sink(刀3,含 import 别名)+ 跨文件 returns-taint(刀4)+ 跨文件 2-hop(刀5)+ 传递 conduit 跨文件(刀6)/同文件(刀7)不动点；0 误报。余:return-of-arg、exploded graph。见 [`10-interprocedural-taint.md`](./10-interprocedural-taint.md) | `extract/taint{,-interproc,-patterns}.js`、`link/taint-link.js`、`taint.pl` | 中高 | Reps–Horwitz–Sagiv POPL'95;CFL-reachability |
-| 7 | **Doop 级过程间指向** | 规模 | 解析动态分派/反射,把死代码/污点误报压到工业级 | linker、points-to | 高 | `05 §12`(完备性:给抽象补维度) |
+| **5 ✅** | **规模引擎（已完成 2026-06-07）** | 规模 | **零安装纯 JS 半朴素 Datalog 引擎** `src/verify/datalog.js`（`evaluate`/`materialize`/`queryEngine`）：闭包查询 `cyclic` 端到端 **52s→1.8s**（110–1238×）、与 tau-prolog 逐位一致；`--engine=datalog` 接 verify/query/MCP；增量闭包 `closure-delta.js`（add+delete DRed，watch 基元就绪）。见 [`11-scale-engine.md`](./11-scale-engine.md) | 事实库、`watch.js`、`cache.js` | 中高 | `05 §9`(PTIME 数据复杂度);增量 = 最小不动点的 IVM |
+| **6 ◑** | **IFDS/CFL-可达 污点（九刀已实现）** | 规模/精度 | within-file RETURN 摘要(刀1)+ param-sink(刀2)+ 跨文件 param-sink(刀3)+ 跨文件 returns-taint(刀4)+ 跨文件 2-hop(刀5)+ 传递 conduit 跨文件(刀6)/同文件(刀7)+ **param→return 透传(刀8)+ 跨文件透传函数(刀9)** 不动点；三类摘要双向跨文件、0 误报。余:**完整 exploded supergraph(精确 realizable-path)**。见 [`10-interprocedural-taint.md`](./10-interprocedural-taint.md) | `extract/taint{,-interproc,-patterns,-callsite}.js`、`link/taint-link.js`、`taint.pl` | 中高 | Reps–Horwitz–Sagiv POPL'95;CFL-reachability |
+| **7 ◑** | **Doop 级过程间指向（首刀 + 实参流 + builtin 回调已落地）** | 规模 | Andersen points-to(`points-to.js`)解析变量持函数/动态分派 + 过程间实参流(argActual/formalParam,二阶回调解析)+ 高阶 builtin 回调(`arr.map(cb)`);behind `--points-to`、parity-safe。**实测本库 +11 reaches 边**。余:**字段敏感(load/store)解 dispatch-table `handlers[k]()`**(最大剩余杠杆)、上下文敏感、跨文件 import 变量持函数、反射。见 [`12-points-to.md`](./12-points-to.md) | linker、points-to | 高 | `05 §12`(完备性:给抽象补维度) |
 | 8 | **全 ITP 放电** | 严谨(地平线) | 接 Dafny/Verus/Lean CLI **真正放电**证明义务(= Logos territory;最严、最贵、需外部工具链) | `contract/3`、Dafny 骨架 | 高 | `05 §10`(λC 顶点) |
 
 ### 推荐主线

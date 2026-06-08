@@ -18,7 +18,7 @@ import { scoreFaithfulness, equiv } from '../src/verify/faithfulness.js'
 import { parseExpr, evalExpr } from '../src/verify/smt-dsl.js'
 import { evaluate } from '../src/verify/datalog.js'
 import { pointsTo } from '../src/verify/points-to.js'
-import { closureFromEdges } from '../src/verify/closure-delta.js'
+import { closureFromEdges, deleteEdge } from '../src/verify/closure-delta.js'
 
 const ref = (routine, v, phi, kind) => ({ pred: 'refinement', args: [routine, v, phi, kind] })
 
@@ -442,4 +442,34 @@ test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance
   assert.ok([...cf].every((x) => ci.has(x)), 'incremental closure equals full recompute (cycle included)')
   // sanity: each cycle node reaches all of {a,b,c,d} (incl. itself via the cycle)
   for (const n of ['a', 'b', 'c']) for (const t of ['a', 'b', 'c', 'd']) assert.ok(reach.get(n)?.has(t), `${n}→${t}`)
+})
+
+test('★5 incremental closure DELETE (DRed): remove-edge maintenance == full recompute (cycle break + re-derivation)', () => {
+  const fullClosure = (es) => {
+    const succ = new Map()
+    for (const [u, v] of es) { if (!succ.has(u)) succ.set(u, new Set()); succ.get(u).add(v) }
+    const m = new Map()
+    for (const u of new Set(es.flat())) {
+      const seen = new Set(); const fr = [...(succ.get(u) || [])]
+      for (const x of fr) seen.add(x)
+      while (fr.length) { const n = fr.pop(); for (const w of (succ.get(n) || [])) if (!seen.has(w)) { seen.add(w); fr.push(w) } }
+      if (seen.size) m.set(u, seen)
+    }
+    return m
+  }
+  const canon = (m) => { const s = new Set(); for (const [a, r] of m) for (const b of r) s.add(`${a}\t${b}`); return s }
+  // a→b→c→a cycle + c→d + x→a + b→e. Build incrementally, then delete the back-edge c→a.
+  const edges = [['a', 'b'], ['b', 'c'], ['c', 'a'], ['c', 'd'], ['x', 'a'], ['b', 'e']]
+  const { reach, succ } = closureFromEdges(edges)
+  deleteEdge(reach, succ, 'c', 'a') // breaks the cycle; a/b/c lose self-reach, x still reaches all
+  const ref = canon(fullClosure(edges.filter(([u, v]) => !(u === 'c' && v === 'a'))))
+  const got = canon(reach)
+  assert.equal(got.size, ref.size, `delta ${got.size} vs full ${ref.size}`)
+  assert.ok([...ref].every((x) => got.has(x)), 'DRed delete equals full recompute (cycle broken, alternate paths re-derived)')
+  assert.ok(!reach.get('a')?.has('a'), 'cycle broken: a no longer reaches itself')
+  assert.ok(!reach.get('c')?.has('a'), 'the removed edge target is gone from c')
+  for (const t of ['a', 'b', 'c', 'd', 'e']) assert.ok(reach.get('x')?.has(t), `x still reaches ${t}`)
+  const before = canon(reach).size
+  deleteEdge(reach, succ, 'd', 'a') // absent edge
+  assert.equal(canon(reach).size, before, 'deleting a non-existent edge is a no-op')
 })

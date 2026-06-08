@@ -22,6 +22,7 @@
 :- dynamic(taint_arg/4).
 :- dynamic(param_sink/4).
 :- dynamic(param_return/2).
+:- dynamic(pass_arg/6).
 
 % ★6b param-sink summaries: param_sink(Fn, Idx, Kind, Ct) records that Fn's
 % formal parameter at Idx reaches an internal sink of Kind (Ct = xss

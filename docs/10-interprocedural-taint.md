@@ -195,12 +195,12 @@ soundness 不变：传递性只在 return 的裸 callee **解析到已证 condui
 
 ## 十二、后续加刀（exploded supergraph 全量 IFDS）
 
-within-file 两刀 + cross-file param-sink + cross-file returns-taint + cross-file 2-hop + 传递 conduit 不动点（跨文件 + 同文件，均含 import 别名解析、content-type 护栏跨跳）+ **param→return 透传摘要（第八刀，见 §十三）** 已落地。完整 IFDS 仍待：
+within-file 两刀 + cross-file param-sink + cross-file returns-taint + cross-file 2-hop + 传递 conduit 不动点（跨文件 + 同文件，均含 import 别名解析、content-type 护栏跨跳）+ **param→return 透传摘要（第八刀，见 §十三）+ 跨文件透传函数（第九刀，见 §十四）** 已落地。完整 IFDS 仍待：
 
-- ✅ **返回-of-tainted-arg（第八刀，已落地 2026-06-08，见 §十三）**：`function id(x){return x}` 这类**透传形参**的返回（`return x` 当 x 是形参）——区别于"内部制造污点"的 conduit,是 param→return 摘要,已与 param-sink 摘要合流。
+- ✅ **返回-of-tainted-arg（第八刀，已落地 2026-06-08，见 §十三）**：`function id(x){return x}` 这类**透传形参**的返回（`return x` 当 x 是形参）——区别于"内部制造污点"的 conduit,是 param→return 摘要,已与 param-sink 摘要合流。✅ **透传函数本身跨文件（id 定义在另一文件经 import）亦已落地（第九刀，见 §十四）**。
 - 最终 **exploded supergraph 上的精确 CFL-可达**（Reps–Horwitz–Sagiv 全量 IFDS），把 conduit/param-sink/return 三类摘要统一成 supergraph 上的 realizable-path 可达。
 
-按真实规模需要再推进；本框架（三遍摘要 + QId `param_sink`/`taint_returns_q`/`param_return` + `taint_arg`/`ret_call`/`ret_returns_call` + 既有 `tainted/2` 闭包 + 调用点/跨文件虚拟汇、source 注入与传递不动点）可增量承载。
+按真实规模需要再推进；本框架（三遍摘要 + QId `param_sink`/`taint_returns_q`/`param_return` + `taint_arg`/`ret_call`/`ret_returns_call`/`pass_arg` + 既有 `tainted/2` 闭包 + 调用点/跨文件虚拟汇、source 注入与传递不动点）可增量承载。
 
 ## 十三、第八刀：return-of-tainted-arg（param→return 透传摘要，与 param-sink 合流，已落地 2026-06-08）
 
@@ -231,3 +231,30 @@ within-file 两刀 + cross-file param-sink + cross-file returns-taint + cross-fi
 - 测试 `test/engines.test.js` ★6 slice-8：断言透传集恰 `id`、违规恰 2（跨 + 同文件）、`swallow` 不出现、JSON 透传被抑制。
 - **真实库实测**（`../src/server/routes`、`../src/auth`）：发现 16 条真实透传（`normalizeBool`/`parseJson`/…），但**违规计数逐位不变**（routes 187/41/23、auth 27/9/3，stash 前后一致）→ **新增 0 误报**（紧合取:透传 ∧ param-sink ∧ 污点实参,三者在现网代码未同时命中改变判定）。
 - 回归（实测绿）：sample-project 7、taint 1（sink_sql）、前七刀全部夹具不变；`npm test` 通过（9 smoke + **33** engines + MCP 16-工具自检）。upgrade/rollback-safe（全加性,旧路径未触）。
+
+## 十四、第九刀：跨文件透传函数（passthrough fn 在另一文件，已落地 2026-06-08）
+
+第八刀的透传**函数本身**限**本地**——`argSource`/`passthroughVarNode` 只认 `paramReturns`（本文件 `summarizeParamReturns` 的产物）里的 callee。当 `id` 定义在另一文件经 `import` 引入时,`render(el, id(name))` 在抽取期看不到 `id` 是透传 → 漏报。第九刀补齐:把"透传判定"也推到 **post-link** 解析,与 param-sink 的跨文件 join 同机。
+
+```js
+// util.js: export function id(x){ return x }                    // param_return('util.js::id',0)
+// lib.js : export function render(el, html){ el.innerHTML=html } // param_sink('lib.js::render',1,xss,html)
+// app.js : import {id} from './util.js'; import {render} from './lib.js'
+//          const name = req.query.name
+//          render(el, id(name))   // 跨文件透传 id → 跨文件 param-sink render = 真 XSS
+//          show(el, id(name))     // 跨文件透传 → 同文件 param-sink show（合成 taint_arg 路径）= 真 XSS
+```
+
+### 实现（pass_arg 候选 + post-link 双解析，零新规则）
+- **抽取（`taint-callsite.js` 新 `crossFilePassArgs`）**：外层实参是**非本地** call `pc(innerArgs)`（`!localFns.has(pc)`）且 inner 有裸污点变量时,对每个污点 inner 位发 `pass_arg(File, Outer, OIdx, PC, IIdx, Node)`——只是**候选**,不臆断 pc 是透传。本地透传仍由第八刀的 `passthroughVarNode` 即时处理（互斥:`else` 分支才落到 `crossFilePassArgs`）。`taint.js` 的三个调用点 arg-resolution helper（`argSource`/`passthroughVarNode`/`crossFilePassArgs`）抽到 `taint-callsite.js`,守住 ≤200 行（taint.js 140 行）。
+- **链接（`taint-link.js`）**：收 `param_return` 进 `paramReturnByQid`（qid→Set(idx)）。对每条 `pass_arg`:用**同一个 `resolve()`**（import 别名→同文件→全局唯一）把 `pc` 解析到 `pq`——`pq` 在 `paramReturnByQid` 且含 `IIdx`（确是个跨文件透传）→ 合成一条 `taint_arg(File, Outer, OIdx, Node)`,经**同一 `emitSink()`** 接外层 `Outer` 的 param-sink。
+- **`emitSink(file, callee, idx, node, skipSameFile)`** 统一真实/合成两路:真实 `taint_arg`（刀3/5）保留 `skipSameFile=true`（同文件外层抽取期已处理,行为 bit-identical）;合成路 `skipSameFile=false`——**透传在别的文件,抽取期不可能处理过**,故同文件外层 param-sink（`show`）也要发（合成路独占,与真实路 arg 形状不相交,无重复）。content-type 护栏因复用 `emitSink` 自动成立（JSON 包装器照抑制）。
+- **可组合**:`Node` 可以是被 source 的 conduit 结果（刀4）——跨文件 conduit→跨文件透传→param-sink 三跳自然串起。`pass_arg/6` 声明 `:- dynamic`（惰性事实,仅 `taint-link` 消费）。
+
+### 验证（已落地）
+- 夹具 `examples/taint-passthrough-xfile/`（三文件:`util.js` 透传 `id`、`lib.js` 跨文件 param-sink `render`/`replyJson`、`app.js` 消费）：`param_return` 恰 `util.js::id/0`；`violation` 恰 **2**（跨文件→跨文件 `xsink_render` + 跨文件→同文件 `xsink_show`）；`suppressed_xss` 含 `xsink_replyJson`（护栏跨文件 + 跨透传成立）。
+- 测试 `test/engines.test.js` ★6 slice-9：断言透传集恰 `util.js::id`、违规恰 2（两种外层）、JSON 跨文件透传被抑制。
+- **真实库实测**（`../src/server/routes`、`../src/auth`）：**违规计数逐位不变**（routes 187/41/23、auth 27/9/3，stash 前后一致）→ **新增 0 误报**。
+- 回归（实测绿）：sample-project 7、taint 1（sink_sql）、第八刀夹具仍 2、前七刀全部不变；`npm test` 通过（9 smoke + **34** engines + MCP 16-工具自检）。`src/extract/` 现 8 文件（≤8 合规,下个 extract 文件需起 `taint/` 子目录）。
+
+至此 conduit / param-sink / param→return 三类摘要均**双向跨文件 + 可组合**。剩 **exploded supergraph 全量精确 CFL-可达**（Reps–Horwitz–Sagiv IFDS,把三类摘要统一成 realizable-path）按规模再推。

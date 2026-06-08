@@ -24,6 +24,10 @@
  *   param_return('File::Fn', Idx)    (slice-8: Fn returns its formal at Idx unchanged —
  *                                     a passthrough; carries an arg's taint to the call
  *                                     result, folded into the param-sink/taint_arg joins)
+ *   pass_arg(File, Outer, OIdx, PC, IIdx, Node)  (slice-9: an outer arg is a non-local
+ *                                     call PC(.. tainted Node at IIdx ..); the post-link
+ *                                     join threads Node into Outer's param-sink iff PC
+ *                                     resolves to a cross-file param_return at IIdx)
  * ★6 interprocedural steps (sound-leaning, always-on — they add true positives
  * without reintroducing the ★3 false XSS, see docs/10):
  *   a) `const x = helper(..)` where `helper` returns untrusted data taints `x`.
@@ -42,54 +46,7 @@ import {
   idOf, noStr, mentions, classifyXssCt, calleeOf, callSiteArgs, bareCalleesOf,
 } from './taint-patterns.js'
 import { summarizeReturns, summarizeParamSinks, summarizeParamReturns, localFnNames } from './taint-interproc.js'
-
-/**
- * ★6b/slice-8 — resolve a call argument to its taint-source node (or null if
- * clean). A bare tainted variable carries its existing node; an inline SOURCE or
- * a tainted-RETURN call (★6a) introduces a fresh source at the call site; a
- * PASSTHROUGH call `id(innerArg)` (slice-8) carries the taint of the inner arg it
- * returns — recurse into that arg so nested wrappers compose.
- */
-function argSource(arg, ctx) {
-  const { taint, returnsTaint, paramReturns, facts, fileId, ln, tag } = ctx
-  const bare = arg.trim()
-  if (/^[A-Za-z_]\w*$/.test(bare) && taint.has(bare)) return taint.get(bare)
-  const callee = calleeOf(bare)
-  if (callee && paramReturns.has(callee)) { // slice-8: a local passthrough call carries its inner arg's taint
-    const inner = callSiteArgs(bare, callee)
-    for (const idx of paramReturns.get(callee)) {
-      const a = inner && inner[idx]
-      if (a != null) { const n = argSource(a, { ...ctx, tag: `${tag}_pt${idx}` }); if (n) return n }
-    }
-  }
-  const isReturnsTaintCall = callee && returnsTaint.has(callee)
-  if (SOURCE.test(arg) || isReturnsTaintCall) {
-    const src = idOf(fileId, ln, tag)
-    facts.push(fact('source', src))
-    return src
-  }
-  return null
-}
-
-/**
- * slice-8 — the existing tainted node behind a local passthrough call `id(v)`,
- * where `v` is a bare tainted/retTaint variable that `id` returns unchanged.
- * Lets a CROSS-FILE param-sink (the taint_arg join) connect from v's node through
- * a local identity wrapper. Returns null when the arg is not such a passthrough.
- */
-function passthroughVarNode(expr, taint, retTaint, paramReturns) {
-  const callee = calleeOf(expr)
-  if (!callee || !paramReturns.has(callee)) return null
-  const inner = callSiteArgs(expr, callee)
-  for (const idx of paramReturns.get(callee)) {
-    const v = inner && inner[idx] && inner[idx].trim()
-    if (v && /^[A-Za-z_]\w*$/.test(v)) {
-      if (taint.has(v)) return taint.get(v)
-      if (retTaint.has(v)) return retTaint.get(v)
-    }
-  }
-  return null
-}
+import { argSource, passthroughVarNode, crossFilePassArgs } from './taint-callsite.js'
 
 export function extractTaintJs(fileId, code) {
   const facts = []
@@ -125,8 +82,9 @@ export function extractTaintJs(fileId, code) {
           if (taint.has(bare)) facts.push(fact('taint_arg', fileId, callee, idx, taint.get(bare)))
           else if (retTaint.has(bare)) facts.push(fact('taint_arg', fileId, callee, idx, retTaint.get(bare))) // ★6 slice-5: cross-file conduit result, 2-hop into a param-sink
         } else {
-          const n = passthroughVarNode(bare, taint, retTaint, paramReturns) // slice-8: id(taintedVar) — a local passthrough feeding a cross-file param-sink
+          const n = passthroughVarNode(bare, taint, retTaint, paramReturns) // slice-8: LOCAL passthrough feeding a param-sink
           if (n) facts.push(fact('taint_arg', fileId, callee, idx, n))
+          else facts.push(...crossFilePassArgs(bare, taint, retTaint, localFns, fileId, callee, idx)) // slice-9: cross-file passthrough candidate
         }
         const ps = local && local.find((s) => s.idx === idx)
         if (!ps) return

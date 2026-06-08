@@ -7,6 +7,8 @@
  *   taint_returns_q('File::Fn')              a tainted-RETURN conduit (QId-keyed)
  *   ret_call(File, Callee, Xnode)            `const x = callee(..)` to a non-local callee
  *   ret_returns_call('File::Fn', Callee)     `return callee(..)` — a transitive conduit
+ *   param_return('File::Fn', Idx)            a passthrough (returns its formal at Idx)
+ *   pass_arg(File, Outer, OIdx, PC, IIdx, Node)  outer arg is a non-local call PC(.. tainted Node ..)
  *
  * This pass (run AFTER `link()`, so `decl/4` exists) resolves each call's bare
  * callee to a file-qualified definition. Joins, all SOUND-leaning:
@@ -38,7 +40,10 @@ export function linkTaint(facts) {
   const globalByName = new Map() // name -> Set(qid)
   const fileOfQid = new Map() // qid -> defining file
   const paramSinkByQid = new Map() // qid -> [{ idx, kind, ct }]
+  const paramReturnByQid = new Map() // slice-9 qid -> Set(idx) the fn returns unchanged (passthrough)
   const conduitQids = new Set() // ★6d qid of a tainted-RETURN conduit (taint_returns_q)
+  const taintArgs = [] // slice 3/5 { file, callee, idx, node } — a tainted value at a call site
+  const passArgs = [] // slice-9 { file, outer, oidx, pc, iidx, node } — outer arg is a non-local call pc(.. tainted node ..)
   const retCalls = [] // ★6d { file, callee, xnode } — `const x = callee(..)` to a non-local callee
   const returnCalls = [] // ★6 slice-6 { qfn, callee } — `return callee(..)`; qfn is a transitive conduit iff callee is
   const imports = new Map() // file -> Map(local -> { mod, imported })
@@ -59,8 +64,16 @@ export function linkTaint(facts) {
       const qid = String(args[0])
       if (!paramSinkByQid.has(qid)) paramSinkByQid.set(qid, [])
       paramSinkByQid.get(qid).push({ idx: Number(args[1]), kind: String(args[2]), ct: String(args[3]) })
+    } else if (pred === 'param_return') {
+      const qid = String(args[0])
+      if (!paramReturnByQid.has(qid)) paramReturnByQid.set(qid, new Set())
+      paramReturnByQid.get(qid).add(Number(args[1]))
     } else if (pred === 'taint_returns_q') {
       conduitQids.add(String(args[0]))
+    } else if (pred === 'taint_arg') {
+      taintArgs.push({ file: String(args[0]), callee: String(args[1]), idx: Number(args[2]), node: String(args[3]) })
+    } else if (pred === 'pass_arg') {
+      passArgs.push({ file: String(args[0]), outer: String(args[1]), oidx: Number(args[2]), pc: String(args[3]), iidx: Number(args[4]), node: String(args[5]) })
     } else if (pred === 'ret_call') {
       retCalls.push({ file: String(args[0]), callee: String(args[1]), xnode: String(args[2]) })
     } else if (pred === 'ret_returns_call') {
@@ -83,22 +96,35 @@ export function linkTaint(facts) {
   }
 
   const out = []
-  for (const { pred, args } of facts) {
-    if (pred !== 'taint_arg') continue
-    const file = String(args[0])
-    const qid = resolve(file, String(args[1]))
-    if (!qid || fileOfQid.get(qid) === file) continue // unresolved, or same-file (extractor did it)
+  // A tainted value reaching a callee whose formal at Idx is a param-sink → a
+  // virtual sink at the call site (reuses the unchanged violation/html_safe rules,
+  // so a Ct=json wrapper stays suppressed). skipSameFile=true for REAL taint_args
+  // (slice 3/5): the extractor already emitted the within-file case. The slice-9
+  // synthesized ones go through with skipSameFile=false — the passthrough lived in
+  // ANOTHER file, so the extractor could NOT have handled them even when the outer
+  // param-sink is same-file.
+  const emitSink = (file, callee, idx, node, skipSameFile) => {
+    const qid = resolve(file, callee)
+    if (!qid || (skipSameFile && fileOfQid.get(qid) === file)) return
     const list = paramSinkByQid.get(qid)
-    if (!list) continue
-    const idx = Number(args[2])
-    const argNode = String(args[3])
+    if (!list) return
     for (const s of list) {
       if (s.idx !== idx) continue
-      const site = `${argNode}:xsink_${String(args[1])}_${idx}`
+      const site = `${node}:xsink_${callee}_${idx}`
       out.push(fact('sink', site, s.kind))
       if (s.kind === 'xss') out.push(fact('sink_ct', site, s.ct))
-      out.push(fact('dataflow', argNode, site))
+      out.push(fact('dataflow', node, site))
     }
+  }
+  for (const ta of taintArgs) emitSink(ta.file, ta.callee, ta.idx, ta.node, true)
+
+  // slice-9 cross-file passthrough: an outer arg `pc(.. tainted node at iidx ..)`
+  // where pc resolves to a param_return at iidx (an identity wrapper in ANOTHER
+  // file) carries `node` to the outer call's argument — thread it into outer's
+  // param-sink. Composes with slice 3/4 (node may be a sourced conduit result).
+  for (const { file, outer, oidx, pc, iidx, node } of passArgs) {
+    const pq = resolve(file, pc)
+    if (pq && paramReturnByQid.get(pq)?.has(iidx)) emitSink(file, outer, oidx, node, false)
   }
 
   // ★6 slice-6 transitive-conduit fixpoint: `return callee(..)` makes a function

@@ -299,6 +299,27 @@ test('★6 slice-8 passthrough (return-of-tainted-arg): a param→return identit
   assert.ok(suppressed.some((s) => s.includes('xsink_replyJson')), 'the passthrough→json flow is suppressed, not flagged or silently dropped')
 })
 
+test('★6 slice-9 cross-file passthrough: an identity wrapper in ANOTHER file composes with a param-sink (cross-file + same-file outer); the JSON guard holds across files', async () => {
+  const program = buildProgram(await extractProject(root('examples/taint-passthrough-xfile'), { lift: 'none' }))
+  // The passthrough is QId-keyed to its DEFINING file (util.js::id), the tainted
+  // args originate in app.js, the param-sinks live in lib.js / app.js.
+  const passthrough = (await runQuery(program, 'param_return(F, I).')).map((r) => `${r.F}/${r.I}`).sort()
+  assert.deepEqual(passthrough, ['util.js::id/0'], 'the cross-file identity wrapper is the only passthrough')
+  const vios = await runQuery(program, "violation(N, 'taint-reaches-sink').")
+  const subjects = vios.map((v) => String(v.N)).sort()
+  // handleHtml: id (util.js) → render (lib.js) = cross-file passthrough INTO a
+  // cross-file param-sink. handleLocal: id (util.js) → show (local) = cross-file
+  // passthrough into a SAME-FILE param-sink (the synthesized-taint_arg path the
+  // extractor cannot reach). Both true positives.
+  assert.equal(vios.length, 2, 'cross-file passthrough composes with both a cross-file and a same-file param-sink')
+  assert.ok(subjects.some((s) => s.includes('xsink_render')), 'cross-file passthrough → cross-file param-sink')
+  assert.ok(subjects.some((s) => s.includes('xsink_show')), 'cross-file passthrough → same-file param-sink (synthesized join)')
+  // handleJson: id → replyJson (Ct=json) — the content-type guard holds across the
+  // file boundary AND the passthrough.
+  const suppressed = (await runQuery(program, 'suppressed_xss(N).')).map((r) => String(r.N))
+  assert.ok(suppressed.some((s) => s.includes('xsink_replyJson')), 'the cross-file passthrough → json flow is suppressed, not flagged')
+})
+
 test('★5 semi-naive Datalog engine: bit-identical parity with tau-prolog (reaches/cyclic/dead_code/tainted/impact)', async () => {
   const canon = (rows, fn) => new Set(rows.map(fn))
   const eqSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x))

@@ -19,6 +19,9 @@ import { parseExpr, evalExpr } from '../src/verify/smt-dsl.js'
 import { evaluate } from '../src/verify/datalog.js'
 import { pointsTo } from '../src/verify/pointsto/andersen.js'
 import { closureFromEdges, deleteEdge } from '../src/verify/closure-delta.js'
+import { proveLoop } from '../src/verify/itp/prove.js'
+import { loopVCs } from '../src/verify/itp/vcgen.js'
+import fs from 'node:fs'
 
 const ref = (routine, v, phi, kind) => ({ pred: 'refinement', args: [routine, v, phi, kind] })
 
@@ -466,6 +469,34 @@ test('刀2 framework hooks + req entry source: preHandler hooks reachable + bare
   const voff = await runQuery(off, "violation(N, 'taint-reaches-sink').")
   assert.equal(von.length, 2, 'with --framework: bare req reaches writeDb (local) + externalSink (cross-file)')
   assert.equal(voff.length, 0, 'parity: without --framework req is not a source ⇒ no taint violations')
+})
+
+// ===================== ★8 ITP B-tier: self-built VCgen + built-in z3 =====================
+
+test('★8 ITP B-tier: a sound loop invariant discharges all 3 VCs via the built-in z3 (no external prover)', async () => {
+  const spec = JSON.parse(fs.readFileSync(root('examples/itp/sum-bound.loop.json'), 'utf8'))
+  // VCgen is a pure construction: ① pre⇒inv, ② the inductive step, ③ inv∧¬guard⇒post.
+  const vcs = loopVCs(spec)
+  assert.deepEqual(vcs.map((v) => v.kind), ['init', 'step', 'exit'])
+  assert.equal(vcs[1].check, 'inductive', 'the step VC is the transition-relation (primed next-state) check')
+  assert.ok(vcs[2].spec.pre.includes('!(i < n)'), 'the exit VC assumes the negated loop guard')
+  // Discharge: the coupling invariant sum==i proves the functional postcondition sum==n.
+  const r = await proveLoop(spec)
+  assert.equal(r.proved, true, 'all three verification conditions discharged by z3 — a machine-checked loop proof')
+  assert.ok(r.vcs.every((v) => v.discharged && !v.vacuous), 'init/step/exit all entailed, none vacuous')
+})
+
+test('★8 ITP B-tier: a non-inductive invariant fails the STEP VC with a concrete counterexample (generate-and-check)', async () => {
+  const spec = JSON.parse(fs.readFileSync(root('examples/itp/noninductive.loop.json'), 'utf8'))
+  const r = await proveLoop(spec)
+  assert.equal(r.proved, false, 'a bad invariant is never reported proved')
+  const init = r.vcs.find((v) => v.kind === 'init')
+  const step = r.vcs.find((v) => v.kind === 'step')
+  // The invariant IS true on entry — the bug is preservation, not initiation. z3
+  // returns a pre-state (e.g. i=0, sum=0) where one iteration breaks `sum <= i`.
+  assert.equal(init.discharged, true, 'the invariant holds on loop entry')
+  assert.equal(step.discharged, false, 'the induction step is refuted by z3')
+  assert.ok(step.counterexample && /\bsum=/.test(step.counterexample), 'the counterexample names the breaking pre-state')
 })
 
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {

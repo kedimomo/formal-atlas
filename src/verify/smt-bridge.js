@@ -50,6 +50,38 @@ export async function checkContract(spec) {
 }
 
 /**
+ * Inductive-step VC (★8 B-tier, docs/13 §五·一). Is a loop invariant PRESERVED
+ * by one body iteration? Encodes the transition relation with primed next-state
+ * variables and asks Z3 whether  inv(x) ∧ guard(x) ∧ x' = body(x) ∧ ¬inv(x')  is
+ * SAT. UNSAT ⇒ the invariant is inductive; SAT ⇒ a concrete pre-state where the
+ * body breaks it (a non-inductive invariant). The prime suffix `'` cannot occur
+ * in a DSL identifier, so next-state consts never collide with user variables.
+ */
+export async function checkInductive(spec) {
+  const Z3 = await z3()
+  const base = {}, next = {}
+  for (const [n, ty] of Object.entries(spec.vars || {})) {
+    base[n] = ty === 'bool' ? Z3.Bool.const(n) : Z3.Int.const(n)
+    next[n] = ty === 'bool' ? Z3.Bool.const(`${n}'`) : Z3.Int.const(`${n}'`)
+  }
+  const C = (s, vmap) => compile(parseExpr(s), Z3, vmap)
+  const assigned = new Set((spec.body || []).map((a) => a.var))
+  const trans = (spec.body || []).map((a) => next[a.var].eq(C(a.expr, base)))
+    .concat(Object.keys(spec.vars || {}).filter((v) => !assigned.has(v)).map((v) => next[v].eq(base[v]))) // frame: unassigned vars unchanged
+
+  const s = new Z3.Solver()
+  ;(spec.inv || []).forEach((i) => s.add(C(i, base)))
+  if (spec.guard) s.add(C(spec.guard, base))
+  trans.forEach((c) => s.add(c))
+  s.add(Z3.Not(andAll(Z3, (spec.inv || []).map((i) => C(i, next)))))
+  const r = await s.check()
+  const counterexample = r === 'sat'
+    ? Object.keys(base).map((n) => `${n}=${s.model().eval(base[n]).toString().replace(/\(-\s*(\d+)\)/, '-$1')}`).join(', ')
+    : null
+  return { name: spec.name || 'loop', inductive: r === 'unsat', counterexample }
+}
+
+/**
  * RBAC / separation-of-duty consistency. Encodes role→permission grants and
  * conflicting-permission pairs, then asks Z3 two questions:
  *   1. Does a role assignment exist that meets all `require` AND respects SoD?

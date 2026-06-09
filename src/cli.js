@@ -25,6 +25,7 @@ Usage:
   formal-atlas explain <path> [--rule=R] [--subject=S]   (derivation/proof tree per violation)
   formal-atlas repair  <path> [--online] [--apply]       (★3 closed loop: LLM patch → re-verify)
   formal-atlas smt     refinement|contract|policy|dafny|faithfulness <spec.json>
+  formal-atlas prove   <loop-spec.json>  (★8 B-tier: VCgen + built-in Z3 discharges loop invariants — no Dafny/Lean)
   formal-atlas watch   <path>            (monitor changes, auto-verify)
 
 Examples:
@@ -138,6 +139,13 @@ async function main() {
     else process.stdout.write(text)
     console.error(`\nshape: ${JSON.stringify(shape(proj.facts), null, 0)}`)
     return
+  }
+
+  if (cmd === 'prove') {
+    // ★8 B-tier (docs/13 §五·一): discharge a loop Hoare-spec's VCs with the
+    // built-in z3 — loop invariants, WITHOUT an external prover (Dafny/Lean).
+    const { runProveFile } = await import('./verify/itp/prove.js')
+    process.exit(await runProveFile(target))
   }
 
   if (!(await hasProlog())) { console.error('tau-prolog unavailable — run `npm install` inside formal-atlas/'); process.exit(1) }

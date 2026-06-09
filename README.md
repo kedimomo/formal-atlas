@@ -24,6 +24,7 @@
 | 前置条件真能保证后置条件？ | 做不到 | `smt contract` → z3 **证明**或给**反例** |
 | 契约**可判定、不矛盾**吗？(精化类型 ★2) | 做不到 | `refine`/`smt refinement` → z3 判定 `φ_pre ⇒ φ_post`,给反例/标 vacuous |
 | 角色授权会让同一人既建又批（职责分离漏洞）？ | grep 不出来 | `smt policy` → z3 给 SAT **witness** / UNSAT |
+| 循环不变式真能保证后置条件？(★8 ITP 刀1) | 做不到 | `prove` → 自建 VCgen 发三 VC、内置 z3 **放电**（循环归纳，无需 Dafny/Lean），非归纳不变式给**反例** |
 
 ## 快速开始（零安装，若在本仓库内）
 
@@ -49,6 +50,10 @@ node src/cli.js smt policy   examples/policy/rbac-sod.json
 # 4b) 精化类型（★2）：判定 φ_pre ⇒ φ_post，给反例/标矛盾（无需 API key）
 node src/cli.js smt refinement examples/refinement/bank.refine.json
 node src/cli.js refine examples/sample-project
+
+# 4c) ★8 ITP 刀1：循环不变式的三 VC，自建 VCgen + 内置 z3 放电（无需 Dafny/Lean）
+node src/cli.js prove examples/itp/sum-bound.loop.json     # ✅ PROVED（耦合不变式 sum==i 真证 sum==n）
+node src/cli.js prove examples/itp/noninductive.loop.json  # ❌ step VC 反例（非归纳不变式）
 
 # 5) 回流 FDRS：深事实 → 现有 tools/lint/prolog-check.js（六支柱规则触发）
 node src/cli.js fdrs examples/sample-project
@@ -103,8 +108,8 @@ $ node src/cli.js fdrs examples/sample-project          # 喂给"现有"FDRS 校
 
 ## 现状与边界（诚实）
 
-- ✅ 已跑通：**JS 深抽取 + points-to 指向分析**（死代码误报根治 86→1；Andersen 引擎解析变量持函数/动态分派、过程间实参流、高阶 builtin 回调 `arr.map(cb)`，behind `--points-to`）、**作用域感知调用解析**（linker 用 import 绑定把跨文件同名函数解析为文件限定节点，死代码误报趋近零）、**多语言 tree-sitter**（Python/Go/Java/Rust/TS，同一 schema）、AI 语义提升（离线+在线）、`reaches/dead_code/cyclic/impact/violation`、**SMT/z3**（契约蕴含证明+反例、RBAC 职责分离）、**精化类型层 ★2**（`refinement/4` + z3 判定 `φ_pre ⇒ φ_post`，四档裁决、诚实区分 `unchecked`，见 [`docs/07`](docs/07-refinement-layer.md)）、**反例驱动修复 + 证明树解释 ★3**（`explain`/`repair`，离线诚实降级 `needs-llm`，[`docs/08`](docs/08-closed-loop.md)）、**规约忠实度评测 ★4**（`faithfulness`，逮 too-weak/too-strong，[`docs/09`](docs/09-faithfulness.md)）、**零安装半朴素 Datalog 规模引擎 ★5**（闭包查询 110–1238×、增量闭包 add+delete，[`docs/11`](docs/11-scale-engine.md)）、**过程间数据流污点分析 ★6**（`taint-reaches-sink`，CWE-89/79；conduit/param-sink/param→return 三类摘要双向跨文件 + content-type 护栏，九刀，[`docs/10`](docs/10-interprocedural-taint.md)）、**FDRS 回流桥 + 深事实信号源**（`fdrs-synthesize --deep`）、**MCP server（16 工具）+ Claude Code 插件**、CLI、**9 smoke + 37 engines 测试 + MCP 16-工具自检**、真实代码验证。
-- ⚠️ 已知限制：**反射 / 字段敏感 dispatch-table**（`handlers[k]()`）指向未解析（**变量持函数、过程间实参流、高阶 builtin 回调已由 points-to 解析**，behind `--points-to`；跨文件同名已由 linker 根治）；作用域解析的 import 绑定与 points-to 目前**仅 JS**（非 JS 走"本地+全局唯一"较松解析）；正则兜底层仅粗粒度；**污点分析已过程间**（★6 九刀，三类摘要双向跨文件、0 误报），唯**完整 exploded-supergraph IFDS（精确 realizable-path）** 未做；LLM 事实是**启发式**、需复核（在线 `repair`/`roundTrip` 需 `ANTHROPIC_API_KEY`）；SMT 契约需用可形式化 DSL 表达；**全 ITP 放电（Dafny/Verus/Lean）未接**（需外部工具链）。根治方案见路线图。
+- ✅ 已跑通：**JS 深抽取 + points-to 指向分析**（死代码误报根治 86→1；Andersen 引擎解析变量持函数/动态分派、过程间实参流、高阶 builtin 回调 `arr.map(cb)`，behind `--points-to`）、**作用域感知调用解析**（linker 用 import 绑定把跨文件同名函数解析为文件限定节点，死代码误报趋近零）、**多语言 tree-sitter**（Python/Go/Java/Rust/TS，同一 schema）、AI 语义提升（离线+在线）、`reaches/dead_code/cyclic/impact/violation`、**SMT/z3**（契约蕴含证明+反例、RBAC 职责分离）、**精化类型层 ★2**（`refinement/4` + z3 判定 `φ_pre ⇒ φ_post`，四档裁决、诚实区分 `unchecked`，见 [`docs/07`](docs/07-refinement-layer.md)）、**反例驱动修复 + 证明树解释 ★3**（`explain`/`repair`，离线诚实降级 `needs-llm`，[`docs/08`](docs/08-closed-loop.md)）、**规约忠实度评测 ★4**（`faithfulness`，逮 too-weak/too-strong，[`docs/09`](docs/09-faithfulness.md)）、**零安装半朴素 Datalog 规模引擎 ★5**（闭包查询 110–1238×、增量闭包 add+delete，[`docs/11`](docs/11-scale-engine.md)）、**过程间数据流污点分析 ★6**（`taint-reaches-sink`，CWE-89/79；conduit/param-sink/param→return 三类摘要双向跨文件 + content-type 护栏，九刀，[`docs/10`](docs/10-interprocedural-taint.md)）、**FDRS 回流桥 + 深事实信号源**（`fdrs-synthesize --deep`）、**ITP 放电 ★8 刀1**（B 档：自建 VCgen 发循环三 VC + 内置 z3 放电不变式归纳，零外部 prover，`prove`，[`docs/13`](docs/13-itp-discharge.md)）、**MCP server（16 工具）+ Claude Code 插件**、CLI、**9 smoke + 42 engines 测试 + MCP 16-工具自检**、真实代码验证。
+- ⚠️ 已知限制：**反射 / 字段敏感 dispatch-table**（`handlers[k]()`）指向未解析（**变量持函数、过程间实参流、高阶 builtin 回调已由 points-to 解析**，behind `--points-to`；跨文件同名已由 linker 根治）；作用域解析的 import 绑定与 points-to 目前**仅 JS**（非 JS 走"本地+全局唯一"较松解析）；正则兜底层仅粗粒度；**污点分析已过程间**（★6 九刀，三类摘要双向跨文件、0 误报），唯**完整 exploded-supergraph IFDS（精确 realizable-path）** 未做；LLM 事实是**启发式**、需复核（在线 `repair`/`roundTrip` 需 `ANTHROPIC_API_KEY`）；SMT 契约需用可形式化 DSL 表达；**ITP 放电 B 档已落地**（★8 刀1：循环不变式经自建 VCgen + 内置 z3 归纳放电，`prove`，无需外部 prover），唯 **C 档外部 ITP（Dafny/Verus/Lean，无界归纳/全功能正确性）未接**（需外部工具链）、且当前吃手写 loop-spec（从代码 lift 不变式的 autoformalization 待续）。根治方案见路线图。
 - 🧭 原则：**按性质难度分流引擎；可判定优先；LLM 只产事实、永远过求解器才成结论**。
 
 ## 安装

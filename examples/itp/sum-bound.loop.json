@@ -1,0 +1,19 @@
+{
+  "_doc": "★8 B-tier ITP demo (docs/13 §五·一). A bounded accumulator loop with a COUPLING invariant `sum == i`. `prove` builds three verification conditions and discharges them with the built-in Z3 — NO Dafny/Lean. This is the kind of body-level obligation `refine` honestly flags as `unchecked`; here the invariant turns it into a machine-checked proof of the functional postcondition `sum == n`.",
+  "name": "bounded-accumulator",
+  "vars": { "i": "int", "n": "int", "sum": "int" },
+  "pre": ["i == 0", "sum == 0", "n >= 0"],
+  "guard": "i < n",
+  "invariant": ["0 <= i", "i <= n", "sum == i"],
+  "body": [
+    { "var": "i", "expr": "i + 1" },
+    { "var": "sum", "expr": "sum + 1" }
+  ],
+  "post": ["sum == n"],
+  "_expected": {
+    "init": "entailed  (i==0 ∧ sum==0 ∧ n>=0  ⊨  0<=i ∧ i<=n ∧ sum==i)",
+    "step": "inductive (inv ∧ i<n ∧ i'=i+1 ∧ sum'=sum+1  ⊨  0<=i' ∧ i'<=n ∧ sum'==i')",
+    "exit": "entailed  (inv ∧ !(i<n)  ⊨  sum==n,  since i==n ∧ sum==i)",
+    "verdict": "PROVED — all 3 VCs discharged by Z3"
+  }
+}

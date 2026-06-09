@@ -1,15 +1,16 @@
 # RESUME — 下次从这里继续
 
-> 本次会话存档点（2026-06-09，**框架模型 刀2：钩子链 + req 入口污点源**）。承上批（框架模型 刀1 = 271 HTTP 入口/+3086 reaches；ITP 自建-tier spec；三阶段 plan）。本批：**实现框架模型 刀2**——① 抽取发 inert `http_hook(file,handler,hookFn)`（route opts 的 preHandler/onRequest/… 字段，值为 Identifier/数组/内联 anon）；② 污点抽取把**具名 handler** 第0参 seed 进独立 inert `entryParam` 图（slice-4 `retTaint` 同构，不动主 taint 图分支选择 → parity 严格）发 `entry_param`，调用点/汇点/argSource 各加一条旁路；③ `fastify.js` 在 `--framework` 下 `http_hook`→`calls3(handler→hook)`+`entry(hook)`、`entry_param`→`source(req)`。夹具 `examples/framework-hooks/` + 1 测试（engines **40** 全绿）。**真实库实测 routes**：5 个 per-route 钩子 + 13 个具名 handler req 源，`rcall` 4135→4563(+428)，**violation 187→187 位不变**（git-stash 验 baseline 一致）。诚实落点：本库 auth/rebac 主走**全局 addHook**（刀1 已捕获），per-route opts 钩子仅 5、裸 req→param-sink 模式不现 → req 源新增 0 真阳（能力正确，夹具证；增益落在有该模式的库）。内联箭头 handler 的 req 暂不 seed（FN_DEF 边界，sound-leaning 漏报，已记）。本文件 + 自动记忆共同记录"我停在哪、下一步做什么"。
+> 本次会话存档点（2026-06-09，**★8 ITP 刀1：B 档自建 VCgen + 内置 z3，零外部**）。承上批（框架模型 刀2 = 钩子链 + req 入口污点源）。本批：**实现 ★8 ITP 刀1（docs/13 §五·一 B 档）**——把带不变式的循环类 `unchecked` 义务**真证掉,不需 Dafny/Lean**。新 `src/verify/itp/`（2 文件,子目录不破 verify/ ≤8）：`vcgen.js`（`loopVCs` 纯逻辑构造三 VC + `toDafnyLoop` 为 C 档备骨架）、`prove.js`（`proveLoop` 放电 + `runProveFile` CLI 薄入口）。**关键复用:每条 VC = 一次 UNSAT 检查**——① `pre⇒inv`、③ `inv∧¬guard⇒post` 直接复用 `checkContract`;② 归纳步 `inv∧guard∧x'=body(x)⇒inv'` 用 smt-bridge 新增 **`checkInductive`**（撇号 `'` 原状态变量编码转移关系 + frame;`'` 在 DSL 标识符里非法→ next-state 常量不撞名）。`proved` ⟺ 三 VC 全 entailed 且无 vacuous。CLI `prove <loop-spec.json>`（薄委派,raw 路径诚实拒绝——autoformalization §五·二未接）。夹具 `examples/itp/`：`sum-bound.loop.json`（耦合不变式 `sum==i` **真证功能后置 `sum==n`**→PROVED）、`noninductive.loop.json`（非归纳不变式→**step VC 被 z3 反例 `i=0,sum=0` 驳回**,generate-and-check 拒假证）。2 测试（engines **40→42** 全绿）。**parity = 纯增量**（新命令 + 新文件 + 一个 export,不动既有路径）→ `verify examples/sample-project` 仍 7、`refine` 仍标 `getCount: unchecked`、40 既有测试全保。诚实落点：**直接闭合 `refine` 诚实标的 `unchecked` 缺口**（循环体+不变式 = 那条 body-level VC）。**余**：MCP `prove` 工具（机械接线,因 `mcp/tools.js` 有**无关未提交改动**故本刀不混入,见下）;autoformalization（§五·二,让 LLM 写不变式→z3 放电,使 `prove` 作用真实代码）;C 档外部 ITP 按需。本文件 + 自动记忆共同记录"我停在哪、下一步做什么"。
 
 ## ⏯️ 下个会话从这里开始（NEXT SESSION — START HERE）
-1. **进入仓库**：`cd U:/trae/todo_list/formal-atlas`（在 `main` 分支，与 `origin/main` 同步，工作树干净）。
-2. **验证存档可跑**：`npm test` → 应 **9 smoke + 40 engines + MCP 16-工具自检 全绿**。
-3. **进度**：★1–★7（精化/闭环/忠实度/规模/过程间污点/指向）+ **框架模型 刀1+刀2** 全部在 `main`、已 push。三阶段计划见 `docs/15`（框架模型，刀1+刀2 ✅、刀3 余）/`docs/13`（ITP）/`docs/14`（IFDS）。
-4. **下一步（二选一，推荐①）**：
-   - **① ITP 刀1（零外部，最高杠杆）**：新建 `src/verify/itp/vcgen.js` 自建 VCgen + 内置 z3，把带不变式的循环类 `unchecked` 真证掉（**不需 Dafny/Lean**，见 `docs/13 §五·一` B 档：循环三 VC + 有界量词）。理由：框架模型 刀1+刀2 实测增益已大半落袋（本库框架形态 + 多走全局 addHook），剩下真缺口是**未证安全核心**（crypto/auth/rebac/Merkle）。
-   - **② 框架模型 刀3（完整化，按需）**：`app.route({handler,preHandler})` 字段式 + `app.register` 子作用域；models-as-data 化（Express/Koa 仅加数据）。见 `docs/15 §五·刀3`。本库收益有限（per-route 钩子仅 5）,故降为可选。
-5. **怎么让我继续**：新会话里说「继续推进 formal-atlas，按 `formal-atlas/RESUME.md` 下一步」，或直接「实现 ITP 刀1」。我会先 `npm test` 确认存档、再开工。纪律：每刀 **夹具 + parity（flag 关位等价，git-stash 验）+ 真实库实测 + commit**。
+1. **进入仓库**：`cd U:/trae/todo_list/formal-atlas`（在 `main` 分支）。**注意**：工作树有**无关未提交改动**（`mcp/tools.js`/`package.json`/`.mcp.json`/`src/repair/loop.js` = MCP 描述/npm-publish 工作流），本刀**刻意未碰未提交**——勿混入你的 commit，也勿擅自还原（是另一条线的 WIP）。
+2. **验证存档可跑**：`npm test` → 应 **9 smoke + 42 engines + MCP 16-工具自检 全绿**（本批 ★8 ITP 刀1 +2）。`node src/cli.js prove examples/itp/sum-bound.loop.json` → ✅ PROVED（exit 0）；`prove examples/itp/noninductive.loop.json` → ❌ step VC 反例（exit 1）。
+3. **进度**：★1–★7 + 框架模型 刀1+刀2 + **★8 ITP 刀1（B 档 VCgen+z3，本批）** 全部在 `main`。三阶段计划见 `docs/15`（框架模型，刀1+刀2 ✅、刀3 余）/`docs/13`（ITP，**刀1 ✅、刀2=C 档外部 ITP 余**）/`docs/14`（IFDS）。
+4. **下一步（按杠杆排序，推荐①）**：
+   - **① ITP autoformalization（B 档续刀，§五·二，最高杠杆）**：现 `prove` 吃**手写** loop-spec JSON；接现有 online/MCP-sampling 通道（同 `refine --online`/`repair`）让 **LLM 从代码写不变式 → `proveLoop` 用内置 z3 放电**——使 `prove` 作用于**真实代码**（如父仓 Merkle/crypto 循环、未证安全核心），而非夹具。神经符号闭环：LLM 提议 + z3 处置，错了喂回重写（同 ★3）。落点 `src/verify/itp/` + 抽取层发结构化 loop facts（guard/body/inv 候选）。
+   - **② MCP `prove` 工具（机械收尾，低成本）**：`proveLoop`/`runProveFile` 已是干净 API，只差在 `mcp/tools.js` 加第 17 工具 + `test-mcp.js` 自检。**前置**：先决定如何处理 `mcp/tools.js` 那批无关未提交改动（要么先把它们独立 commit，要么单独起干净分支加 prove 工具）。
+   - **③ 框架模型 刀3 / C 档外部 ITP**：按需，本库收益有限（见 `docs/15 §五·刀3`、`docs/13 §五·一` C 档）。
+5. **怎么让我继续**：新会话里说「继续推进 formal-atlas，按 `formal-atlas/RESUME.md` 下一步」，或直接「实现 ITP autoformalization」/「加 MCP prove 工具」。我会先 `npm test` 确认存档、再开工。纪律：每刀 **夹具 + parity（纯增量或 flag 关位等价，git-stash 验）+ 真实库实测 + commit**。
 > 旁注：`.trae/` 下 micro-forge 草稿是**无关**未跟踪文件，历次 commit 一律排除，勿混入。
 
 ## 当前所在分支
@@ -41,7 +42,7 @@ node src/cli.js verify  ../src/server/routes              # ★3+★6：直接 s
 
 ## 下一步：★1–★4 主线 + ★6 九刀已完成,余为"按需"的规模/精度工程（06-frontier-map 5–8）
 
-> **🎯 推荐执行序（2026-06-08 实测修正,详见 `docs/15`）= 框架模型 → ITP 放电 → 完整 IFDS。** 实测反复证明:语言级引擎（points-to/IFDS）在本库**已够精（误报 0）**,缺口在 **① 框架中介调用**（Fastify 450 路由/钩子,`field_call`=0 根因）和 **② 未证安全核心**。**✅ ①框架模型 刀1 已落地（2026-06-09,`src/models/`,`--framework`）**:模型化 routes **271 HTTP 入口**、`reaches` **+3086 边**（vs points-to +11、字段敏感 +0）——**高杠杆论点证实**;余刀2（钩子链+req 源）、刀3（route({})/register/models-as-data）。**②ITP 放电（`docs/13`）**:刀1=**自建 VCgen + 内置 z3（零外部,见 `docs/13 §五·一`）**,刀2=外部 ITP 仅顶档。**③完整 IFDS（`docs/14`）** 第三（本库误报已 0、边际低）。**不是**继续堆 points-to/IFDS 精度。
+> **🎯 推荐执行序（2026-06-08 实测修正,详见 `docs/15`）= 框架模型 → ITP 放电 → 完整 IFDS。** 实测反复证明:语言级引擎（points-to/IFDS）在本库**已够精（误报 0）**,缺口在 **① 框架中介调用**（Fastify 450 路由/钩子,`field_call`=0 根因）和 **② 未证安全核心**。**✅ ①框架模型 刀1 已落地（2026-06-09,`src/models/`,`--framework`）**:模型化 routes **271 HTTP 入口**、`reaches` **+3086 边**（vs points-to +11、字段敏感 +0）——**高杠杆论点证实**;余刀2（钩子链+req 源 ✅ 2026-06-09）、刀3（route({})/register/models-as-data）。**②ITP 放电（`docs/13`）**:**刀1=自建 VCgen + 内置 z3（零外部）✅ 已落地 2026-06-09**（`src/verify/itp/`,CLI `prove`,循环不变式三 VC,见 `docs/13 §五·一`）;续=autoformalization（LLM 写不变式→z3 放电,§五·二）;刀2=外部 ITP 仅顶档。**③完整 IFDS（`docs/14`）** 第三（本库误报已 0、边际低）。**不是**继续堆 points-to/IFDS 精度。
 
 - **★6 过程间污点·九刀已实现**（`docs/10-interprocedural-taint.md`）：
   - **刀1（tainted-RETURN 摘要）**：`summarizeReturns` 给 within-file tainted-RETURN 摘要——`const x = helper(req)` 当 helper 返回不可信数据时跨调用污染 x（sound-leaning，`return db.query(arg)` 这类返回"结果而非输入"的不算 conduit）。发 `taint_returns(Fn)`；夹具 `examples/taint-interproc/`。

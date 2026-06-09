@@ -1,15 +1,15 @@
 # RESUME — 下次从这里继续
 
-> 本次会话存档点（2026-06-09，**框架模型 刀1 + ITP 自建-tier spec + 三阶段 plan**）。承上批（★6 刀8/9、★7 实参流/builtin/字段敏感、★5 DRed、全部已合并 push）。本批：**① 实现"阶段一"框架模型感知 刀1**（`src/models/{index,fastify}.js`,`--framework`：`app.METHOD(path[,opts],handler)` → `http_route` → `calls3(scope→handler)`+`entry`+`http_entry`；实测 routes **271 HTTP 入口、reaches +3086 边**——本库高杠杆论点证实；parity-safe 默认 routes 187/sample 7/taint 1 位等价）；**② 回答"阶段二必须用 Dafny/Lean 吗"=否**（`docs/13 §五·一` 三档:A 内置 z3 / **B 自建 VCgen+内置 z3 零外部** / C 顶档才需外部内核——"数学自建框架"在 B 档成立）；**③ 三阶段具体计划已存**（`docs/15` 框架模型 + `docs/13` ITP + `docs/14` IFDS,含刀法/文件布局/执行序）。engines 39。本文件 + 自动记忆（`formal-atlas-subsystem.md`）共同记录"我停在哪、下一步做什么"。
+> 本次会话存档点（2026-06-09，**框架模型 刀2：钩子链 + req 入口污点源**）。承上批（框架模型 刀1 = 271 HTTP 入口/+3086 reaches；ITP 自建-tier spec；三阶段 plan）。本批：**实现框架模型 刀2**——① 抽取发 inert `http_hook(file,handler,hookFn)`（route opts 的 preHandler/onRequest/… 字段，值为 Identifier/数组/内联 anon）；② 污点抽取把**具名 handler** 第0参 seed 进独立 inert `entryParam` 图（slice-4 `retTaint` 同构，不动主 taint 图分支选择 → parity 严格）发 `entry_param`，调用点/汇点/argSource 各加一条旁路；③ `fastify.js` 在 `--framework` 下 `http_hook`→`calls3(handler→hook)`+`entry(hook)`、`entry_param`→`source(req)`。夹具 `examples/framework-hooks/` + 1 测试（engines **40** 全绿）。**真实库实测 routes**：5 个 per-route 钩子 + 13 个具名 handler req 源，`rcall` 4135→4563(+428)，**violation 187→187 位不变**（git-stash 验 baseline 一致）。诚实落点：本库 auth/rebac 主走**全局 addHook**（刀1 已捕获），per-route opts 钩子仅 5、裸 req→param-sink 模式不现 → req 源新增 0 真阳（能力正确，夹具证；增益落在有该模式的库）。内联箭头 handler 的 req 暂不 seed（FN_DEF 边界，sound-leaning 漏报，已记）。本文件 + 自动记忆共同记录"我停在哪、下一步做什么"。
 
 ## ⏯️ 下个会话从这里开始（NEXT SESSION — START HERE）
 1. **进入仓库**：`cd U:/trae/todo_list/formal-atlas`（在 `main` 分支，与 `origin/main` 同步，工作树干净）。
-2. **验证存档可跑**：`npm test` → 应 **9 smoke + 39 engines + MCP 16-工具自检 全绿**。
-3. **进度**：★1–★7（精化/闭环/忠实度/规模/过程间污点/指向）+ **框架模型刀1** 全部在 `main`、已 push。三阶段计划见 `docs/15`（框架模型）/`docs/13`（ITP）/`docs/14`（IFDS）。
+2. **验证存档可跑**：`npm test` → 应 **9 smoke + 40 engines + MCP 16-工具自检 全绿**。
+3. **进度**：★1–★7（精化/闭环/忠实度/规模/过程间污点/指向）+ **框架模型 刀1+刀2** 全部在 `main`、已 push。三阶段计划见 `docs/15`（框架模型，刀1+刀2 ✅、刀3 余）/`docs/13`（ITP）/`docs/14`（IFDS）。
 4. **下一步（二选一，推荐①）**：
-   - **① 框架模型 刀2**（最连贯）：钩子链 `opts.preHandler`/`onRequest` + 全局 `addHook` → `calls3(handler→hook)`，并把 handler 第0参 `req` 标成入口污点 `source` → 直接服务"未认证请求能否到 DB 写/汇"安全查询。改 `src/extract/js-ast.js`（http_route 已发,补 hook 字段）+ `src/models/fastify.js`。见 `docs/15 §五·刀2`。
-   - **② ITP 刀1**（零外部）：新建 `src/verify/itp/vcgen.js` 自建 VCgen + 内置 z3，把带不变式的循环类 `unchecked` 真证掉（**不需 Dafny/Lean**，见 `docs/13 §五·一` B 档）。
-5. **怎么让我继续**：新会话里说「继续推进 formal-atlas，按 `formal-atlas/RESUME.md` 下一步」，或直接「实现框架模型刀2」。我会先 `npm test` 确认存档、再开工。纪律：每刀 **夹具 + parity（flag 关位等价）+ 真实库实测 + commit**。
+   - **① ITP 刀1（零外部，最高杠杆）**：新建 `src/verify/itp/vcgen.js` 自建 VCgen + 内置 z3，把带不变式的循环类 `unchecked` 真证掉（**不需 Dafny/Lean**，见 `docs/13 §五·一` B 档：循环三 VC + 有界量词）。理由：框架模型 刀1+刀2 实测增益已大半落袋（本库框架形态 + 多走全局 addHook），剩下真缺口是**未证安全核心**（crypto/auth/rebac/Merkle）。
+   - **② 框架模型 刀3（完整化，按需）**：`app.route({handler,preHandler})` 字段式 + `app.register` 子作用域；models-as-data 化（Express/Koa 仅加数据）。见 `docs/15 §五·刀3`。本库收益有限（per-route 钩子仅 5）,故降为可选。
+5. **怎么让我继续**：新会话里说「继续推进 formal-atlas，按 `formal-atlas/RESUME.md` 下一步」，或直接「实现 ITP 刀1」。我会先 `npm test` 确认存档、再开工。纪律：每刀 **夹具 + parity（flag 关位等价，git-stash 验）+ 真实库实测 + commit**。
 > 旁注：`.trae/` 下 micro-forge 草稿是**无关**未跟踪文件，历次 commit 一律排除，勿混入。
 
 ## 当前所在分支

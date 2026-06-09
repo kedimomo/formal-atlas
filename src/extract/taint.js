@@ -10,6 +10,9 @@
  * Emits for rules/taint.pl:
  *   source(Id) · sink(Id, Kind) · sanitizer(Id) · dataflow(A, B)   (Id='file:line:tag')
  *   sink_ct(Id, json|html|unknown)   (★3: content-type refinement for xss sinks)
+ *   entry_param(File, Fn, Node)      (刀2: a route handler's first param (req); the
+ *                                     framework model emits source(Node) under --framework
+ *                                     so request input flows from the handler into sinks)
  *   taint_returns(Fn)                (★6a: within-file tainted-RETURN summary)
  *   taint_returns_q('File::Fn')      (★6d: same, QId-keyed for the cross-file join)
  *   param_sink('File::Fn', Idx, Kind, Ct)  (★6b: formal-param → internal sink, QId-keyed)
@@ -43,15 +46,16 @@
 import { fact } from '../lift/fact-model.js'
 import {
   SOURCE, SANITIZER, SINK, FN_DEF,
-  idOf, noStr, mentions, classifyXssCt, calleeOf, callSiteArgs, bareCalleesOf,
+  idOf, noStr, mentions, classifyXssCt, calleeOf, callSiteArgs, bareCalleesOf, fnNameOf, paramsOf,
 } from './taint-patterns.js'
 import { summarizeReturns, summarizeParamSinks, summarizeParamReturns, localFnNames } from './taint-interproc.js'
 import { argSource, passthroughVarNode, crossFilePassArgs } from './taint-callsite.js'
 
-export function extractTaintJs(fileId, code) {
+export function extractTaintJs(fileId, code, handlers = new Set()) {
   const facts = []
   const taint = new Map() // varName -> node id (currently tainted)
   const retTaint = new Map() // ★6d varName -> node id (assigned a non-local call result; sourced cross-file)
+  const entryParam = new Map() // 刀2 varName -> node id: a route handler's first param (req), inert until the framework model sources it
   const { conduits: returnsTaint, returnCalls } = summarizeReturns(code) // ★6a + slice-6: conduits + transitive return-calls
   const paramSinks = summarizeParamSinks(code) // ★6b: fn -> [{idx, kind, ct}] reaching a sink
   const paramReturns = summarizeParamReturns(code) // slice-8: fn -> Set(idx) returned unchanged (passthrough)
@@ -65,7 +69,16 @@ export function extractTaintJs(fileId, code) {
     const line = raw.trim()
     const ln = i + 1
     if (!line || line.startsWith('//') || line.startsWith('*')) return
-    if (FN_DEF.test(line)) { taint.clear(); retTaint.clear() } // taint does not cross function boundaries
+    if (FN_DEF.test(line)) { // taint does not cross function boundaries
+      taint.clear(); retTaint.clear(); entryParam.clear()
+      // 刀2: a route handler's first param is the untrusted request — seed it as an
+      // entry-source candidate (emit entry_param; the framework model emits source(node)).
+      const fn = fnNameOf(line)
+      if (fn && handlers.has(fn)) {
+        const p0 = paramsOf(line)[0]
+        if (p0) { const node = idOf(fileId, ln, p0); entryParam.set(p0, node); facts.push(fact('entry_param', fileId, fn, node)) }
+      }
+    }
     const code2 = noStr(line)
 
     // ★6b/c: scan call sites. A tainted-variable argument emits taint_arg/4 (for
@@ -81,6 +94,7 @@ export function extractTaintJs(fileId, code) {
         if (/^[A-Za-z_]\w*$/.test(bare)) {
           if (taint.has(bare)) facts.push(fact('taint_arg', fileId, callee, idx, taint.get(bare)))
           else if (retTaint.has(bare)) facts.push(fact('taint_arg', fileId, callee, idx, retTaint.get(bare))) // ★6 slice-5: cross-file conduit result, 2-hop into a param-sink
+          else if (entryParam.has(bare)) facts.push(fact('taint_arg', fileId, callee, idx, entryParam.get(bare))) // 刀2: bare req into a param-sink (inert until the model sources the node)
         } else {
           const n = passthroughVarNode(bare, taint, retTaint, paramReturns) // slice-8: LOCAL passthrough feeding a param-sink
           if (n) facts.push(fact('taint_arg', fileId, callee, idx, n))
@@ -88,7 +102,7 @@ export function extractTaintJs(fileId, code) {
         }
         const ps = local && local.find((s) => s.idx === idx)
         if (!ps) return
-        const src = argSource(arg, { taint, returnsTaint, paramReturns, facts, fileId, ln, tag: `psrc_${callee}_${idx}` })
+        const src = argSource(arg, { taint, entryParam, returnsTaint, paramReturns, facts, fileId, ln, tag: `psrc_${callee}_${idx}` })
         if (!src) return
         const site = idOf(fileId, ln, `psink_${callee}_${idx}`)
         facts.push(fact('sink', site, ps.kind))
@@ -133,6 +147,8 @@ export function extractTaintJs(fileId, code) {
       }
       const rtv = [...retTaint].find(([v]) => mentions(code2, v))
       if (rtv) facts.push(fact('dataflow', rtv[1], sinkId)) // ★6d: inert until the cross-file conduit join sources rtv
+      const ev = [...entryParam].find(([v]) => mentions(code2, v))
+      if (ev) facts.push(fact('dataflow', ev[1], sinkId)) // 刀2: bare req directly in a sink (inert until the model sources the handler's req)
       break
     }
   })

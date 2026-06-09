@@ -23,6 +23,7 @@
 :- dynamic(param_sink/4).
 :- dynamic(param_return/2).
 :- dynamic(pass_arg/6).
+:- dynamic(entry_param/3).
 
 % ★6b param-sink summaries: param_sink(Fn, Idx, Kind, Ct) records that Fn's
 % formal parameter at Idx reaches an internal sink of Kind (Ct = xss
@@ -46,6 +47,13 @@
 % virtual sink (and a JSON wrapper stays suppressed), and id(taintedVar) handed
 % to a cross-file param-sink emits taint_arg with the inner node. Inert as a fact
 % (declared dynamic for query/explain + a future cross-file passthrough join).
+
+% 刀2 framework entry source: entry_param(File, Fn, Node) marks a route handler's
+% first parameter (the untrusted request). It is INERT in Prolog — the Fastify
+% model (src/models/fastify.js) emits source(Node) under --framework, which the
+% UNCHANGED tainted/2 closure then carries to any sink the request reaches (the
+% extractor already laid the inert dataflow edges from Node). No --framework ⇒ no
+% source ⇒ bit-identical (upgrade/rollback-safe, like http_route/http_hook).
 
 % A node is tainted if it is a source, or untrusted data flows into it.
 % (★5: short-circuit when the semi-naive engine has materialized tainted/1 facts.)

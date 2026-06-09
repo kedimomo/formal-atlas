@@ -4,7 +4,7 @@
  * bare-name, `calls3/3` adds the caller's file so the linker resolves cross-file.
  * Predicates: file/2 defines/4 method/1 async_fn/1 param/3 calls/2 calls3/3
  *   import_binding/4 imports/2 exports/2 has_loop/2 awaits_in_loop/1
- *   crypto_in_loop/1 calls_external/2 string_lit/3 addr_taken/2 http_route/4
+ *   crypto_in_loop/1 calls_external/2 string_lit/3 addr_taken/2 http_route/4 http_hook/3
  */
 import * as acorn from 'acorn'
 import { fact } from '../lift/fact-model.js'
@@ -22,6 +22,8 @@ const SENSITIVE = /tenant-\d+|^system$|password|secret|api[_-]?key|private[_-]?k
 // ★7 points-to: higher-order builtins that INVOKE a function-valued arg (arr.map(cb), p.then(cb)).
 const HIGHER_ORDER = new Set(['map', 'forEach', 'filter', 'reduce', 'reduceRight', 'flatMap',
   'find', 'findIndex', 'findLast', 'some', 'every', 'sort', 'then', 'catch', 'finally'])
+// stage-1 framework model (刀2): per-route hook chain fields in a Fastify route's opts object.
+const HOOK_FIELDS = new Set(['preHandler', 'onRequest', 'preValidation', 'preParsing', 'preSerialization', 'onSend', 'onResponse', 'onError'])
 
 function calleeName(node) {
   const c = node.callee
@@ -101,13 +103,9 @@ export function extractJs(fileId, code) {
       facts.push(fact('alloc', nm, nm), fact('isFunction', nm))
       if (parent?.type === 'MethodDefinition') facts.push(fact('method', nm))
       if (node.async) facts.push(fact('async_fn', nm))
+      // ★7 points-to: formalParam keys the interproc arg→formal flow by the fn-object id (=nm, matching alloc(nm,nm)). Additive+inert without --points-to.
       ;(node.params || []).forEach((p, i) => {
-        const pn = p.type === 'Identifier' ? p.name
-          : (p.type === 'RestElement' && p.argument?.name) ? p.argument.name
-            : (p.type === 'AssignmentPattern' && p.left?.name) ? p.left.name
-              : `arg${i}`
-        // ★7 points-to: formalParam keys the interprocedural arg→formal flow by the
-        // function-object id (= nm, matching alloc(nm,nm)). Additive+inert without --points-to.
+        const pn = p.type === 'Identifier' ? p.name : (p.type === 'RestElement' && p.argument?.name) ? p.argument.name : (p.type === 'AssignmentPattern' && p.left?.name) ? p.left.name : `arg${i}`
         facts.push(fact('param', nm, i, pn), fact('formalParam', nm, i, pn))
       })
       scopeStack.push(nm)
@@ -143,11 +141,13 @@ export function extractJs(fileId, code) {
       }
       // ★7 field-sensitive: a member call on an object-literal var (`h.foo()`/`h[k]()`) is a dispatch-table call.
       if (node.callee?.type === 'MemberExpression' && node.callee.object?.type === 'Identifier' && objLitVars.has(node.callee.object.name)) facts.push(fact('field_call', cur(), node.callee.object.name, node.callee.computed ? '*' : node.callee.property?.name))
-      // stage-1 framework model: app.METHOD(path[,opts], handler) — record the route handler (inert; src/models activates it under --framework).
+      // stage-1 framework model: app.METHOD(path[,opts], handler) — record the route handler + per-route hook fns (inert; src/models activates them under --framework).
       if (node.callee?.type === 'MemberExpression' && /^(app|fastify|router|server)$/.test(node.callee.object?.name) && /^(get|post|put|delete|patch|all|head|options|addHook)$/.test(node.callee.property?.name)) {
         const h = node.arguments?.[node.arguments.length - 1]
         const hn = h?.type === 'Identifier' ? h.name : (FN_TYPES.has(h?.type) ? `anon@${h.loc?.start?.line ?? 0}` : null)
         if (hn) facts.push(fact('http_route', fileId, cur(), node.callee.property.name, hn))
+        const opts = hn && node.arguments.find((a) => a?.type === 'ObjectExpression') // 刀2: preHandler/onRequest hook chain in the route opts object
+        for (const pr of (opts ? opts.properties : []) || []) if (HOOK_FIELDS.has(pr.key?.name)) for (const e of (pr.value?.elements || [pr.value])) { const f = e?.type === 'Identifier' ? e.name : (FN_TYPES.has(e?.type) ? `anon@${e.loc?.start?.line ?? 0}` : null); if (f) facts.push(fact('http_hook', fileId, hn, f)) }
       }
     }
     // ★7 points-to: `const x = y` aliasing → assign; `const h = {k: fn}` → field_store (dispatch table).

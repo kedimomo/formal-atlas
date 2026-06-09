@@ -24,7 +24,13 @@ export async function extractFile(fileId, code, ext) {
     result = { facts: extractGeneric(fileId, code, langOf(ext)), method: 'regex' }
   }
   // Data-flow taint facts (source/sink/sanitizer/dataflow) for JS-family files.
-  if (TAINT_EXT.has(ext)) result.facts = result.facts.concat(extractTaintJs(fileId, code))
+  // The framework model (刀2) needs a route handler's first param marked an entry
+  // taint source; pass the file's http_route handler names so the taint extractor
+  // seeds them (emitting inert entry_param/3 — the model activates it as source).
+  if (TAINT_EXT.has(ext)) {
+    const handlers = new Set(result.facts.filter((f) => f.pred === 'http_route').map((f) => String(f.args[3])))
+    result.facts = result.facts.concat(extractTaintJs(fileId, code, handlers))
+  }
   return result
 }
 

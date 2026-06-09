@@ -17,9 +17,12 @@ import { SOURCE, idOf, calleeOf, callSiteArgs } from './taint-patterns.js'
  * recurse into that arg so nested wrappers compose.
  */
 export function argSource(arg, ctx) {
-  const { taint, returnsTaint, paramReturns, facts, fileId, ln, tag } = ctx
+  const { taint, entryParam, returnsTaint, paramReturns, facts, fileId, ln, tag } = ctx
   const bare = arg.trim()
   if (/^[A-Za-z_]\w*$/.test(bare) && taint.has(bare)) return taint.get(bare)
+  // 刀2: a route handler's first param (req), seeded as an entry source by the
+  // framework model — its node is inert until the model emits source(node).
+  if (/^[A-Za-z_]\w*$/.test(bare) && entryParam?.has(bare)) return entryParam.get(bare)
   const callee = calleeOf(bare)
   if (callee && paramReturns.has(callee)) { // slice-8: a local passthrough call carries its inner arg's taint
     const inner = callSiteArgs(bare, callee)

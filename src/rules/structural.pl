@@ -31,6 +31,7 @@
 :- dynamic(loop_count/2).
 :- dynamic(entry/1).
 :- dynamic(http_entry/1).   % stage-1 framework model: a route handler (HTTP entry point)
+:- dynamic(http_hook/3).    % 刀2: http_hook(File, Handler, Hook) — a per-route preHandler/onRequest hook (model-consumed, inert in Prolog)
 % Semantic relations from the AI lifter (may be absent):
 :- dynamic(side_effect/2).
 :- dynamic(pure/1).

@@ -447,6 +447,27 @@ test('stage-1 framework model: Fastify route handlers become reachable from the 
   assert.equal((await runQuery(on, "reaches('registerRoutes', 'audit').")).length, 1, 'the named handler reaches audit too')
 })
 
+test('刀2 framework hooks + req entry source: preHandler hooks reachable + bare req flows into sql sinks (--framework)', async () => {
+  const on = buildProgram(await extractProject(root('examples/framework-hooks'), { lift: 'none', frameworkEnabled: true }))
+  const off = buildProgram(await extractProject(root('examples/framework-hooks'), { lift: 'none' }))
+  // Hook chains: a preHandler (auth/rebac) is framework-invoked before the handler,
+  // so the model makes it reachable from the handler and a call-graph entry — its
+  // body (the security core) now enters the analyzed graph. Both opts forms work:
+  // an array `{ preHandler: [requireAuth, rebacCheck] }` and a single fn `requireAuth`.
+  assert.equal((await runQuery(on, "reaches('listHandler', 'requireAuth').")).length, 1, 'array-form preHandler reachable from its handler')
+  assert.equal((await runQuery(on, "reaches('listHandler', 'rebacCheck').")).length, 1, 'the second array-form preHandler is reachable too')
+  assert.equal((await runQuery(on, "reaches('sendHandler', 'requireAuth').")).length, 1, 'single-fn-form preHandler reachable from its handler')
+  assert.ok((await runQuery(on, "entry('requireAuth').")).length >= 1, 'the hook is a call-graph entry (not dead)')
+  assert.equal((await runQuery(off, "reaches('listHandler', 'requireAuth').")).length, 0, 'parity: without --framework there is no handler→hook edge')
+  // req entry source: the handler's bare `req` reaches both sql param-sinks (local
+  // writeDb + cross-file externalSink) ONLY when the model sources it — req is the
+  // whole untrusted request object, a flow the body-level req.query/body patterns miss.
+  const von = await runQuery(on, "violation(N, 'taint-reaches-sink').")
+  const voff = await runQuery(off, "violation(N, 'taint-reaches-sink').")
+  assert.equal(von.length, 2, 'with --framework: bare req reaches writeDb (local) + externalSink (cross-file)')
+  assert.equal(voff.length, 0, 'parity: without --framework req is not a source ⇒ no taint violations')
+})
+
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {
   // A graph WITH a cycle (a→b→c→a) plus c→d and x→a — stresses ancestors×descendants.
   const edges = [['a', 'b'], ['b', 'c'], ['c', 'a'], ['c', 'd'], ['x', 'a']]

@@ -38,7 +38,7 @@ const FN_TYPES = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFun
 const SKIP_KEYS = new Set(['type', 'loc', 'start', 'end', 'range'])
 const ASC = new Set(['<', '<='])
 
-function parse(code) {
+export function parse(code) {
   for (const sourceType of ['module', 'script']) {
     try { return acorn.parse(code, { ecmaVersion: 'latest', sourceType, locations: true, allowReturnOutsideFunction: true }) } catch { /* try next */ }
   }
@@ -126,8 +126,15 @@ function bodySafe(body, counter, boundName, boundBase) {
   return safe
 }
 
-/** Recognize one ForStatement as an ascending counting loop → bound-safety spec, or null. */
-function recognize(node, fileId) {
+/**
+ * Parse a ForStatement header into a loop context { counter, init, bound, step, op },
+ * verifying the body is safe to model (no counter/bound mutation, no escape, no nested
+ * loop). Accepts ANY positive step — the per-access OOB analysis (oob.js) handles step>1
+ * by reasoning per access; the iterator-bound caller below additionally requires step===1.
+ * Returns null if the loop is not soundly modelable.
+ */
+export function parseLoop(node) {
+  if (node?.type !== 'ForStatement') return null
   const initR = parseInit(node.init)
   if (!initR) return null
   const { counter, init } = initR
@@ -136,22 +143,30 @@ function recognize(node, fileId) {
   const bound = boundTerm(test.right)
   if (!bound) return null
   const step = parseStep(node.update, counter)
-  if (step !== 1) return null // v1: step-1 only. For step>1 the iterator bound `i<=BOUND`
-  // is mechanically false (i reaches BOUND+1 on the last stride) even when every array
-  // access is safely guarded — flagging those would be a false positive. Strided loops
-  // need per-access OOB obligations (future) to be useful, so we skip them, not guess.
+  if (step == null) return null
   if (!bodySafe(node.body, counter, bound.name, bound.base)) return null
+  return { counter, init, bound, step, op: test.operator }
+}
 
+/** Recognize one ForStatement as a UNIT-STRIDE ascending counting loop → bound-safety spec, or null. */
+function recognize(node, fileId) {
+  const ctx = parseLoop(node)
+  if (!ctx) return null
+  if (ctx.step !== 1) return null // v1 iterator-bound: step-1 only. For step>1 the bound `i<=BOUND`
+  // is mechanically false (i reaches BOUND+1 on the last stride) even when every array access
+  // is safely guarded — flagging those would be a false positive. Strided loops go to the
+  // per-access OOB analysis (oob.js) instead, which reasons per access (sound for any step).
+  const { counter, init, bound, op } = ctx
   const vars = { [counter]: 'int' }
   if (init.name) vars[init.name] = 'int'
   if (bound.varName) vars[bound.varName] = 'int'
   const ln = node.loc?.start?.line ?? 0
   return {
-    name: `${fileId}:${ln} (${counter} ${test.operator} ${bound.expr})`,
+    name: `${fileId}:${ln} (${counter} ${op} ${bound.expr})`,
     vars,
     pre: [`${counter} == ${init.str}`, `${init.str} <= ${bound.expr}`], // counter init + loop-entered well-formedness (for arr.length this is the always-true 0 <= len)
-    guard: `${counter} ${test.operator} ${bound.expr}`,
-    body: [{ var: counter, expr: `${counter} + ${step}` }],
+    guard: `${counter} ${op} ${bound.expr}`,
+    body: [{ var: counter, expr: `${counter} + 1` }],
     invariant: [`${init.str} <= ${counter}`, `${counter} <= ${bound.expr}`], // mechanical bound invariant → discharges offline
     post: [`${counter} <= ${bound.expr}`], // iterator never overshoots the bound
     loc: ln,

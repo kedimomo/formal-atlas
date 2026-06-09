@@ -95,31 +95,47 @@ async function runProveSpecFile(target) {
 }
 
 /**
- * Lift counting loops from real code (a .js file or a directory) and prove each
- * one's iterator bound-safety with the built-in z3 (docs/13 §五·二, front half).
- * The extractor is conservative — loops it cannot model precisely are SKIPPED,
- * never guessed — so a `proved` here is a genuine machine-checked safety result
- * and a `NOT proved` is a real overshoot (off-by-one / stride-skips-bound).
+ * Lift counting loops from real code (a .js file or a directory) and prove, with the
+ * built-in z3 (docs/13 §五·二): (1) each unit-stride loop's iterator bound-safety, and
+ * (2) the in-bounds-ness of every counter-indexed `arr[idx]` access (per-access OOB,
+ * any step, with the access's guarding path conditions). The extractors are
+ * conservative — what they cannot model precisely is SKIPPED, never guessed — and a
+ * `possible OOB` is only reported for a fully-modeled access.
  */
 async function runProveCode(target) {
   const { walkFiles } = await import('../../pipeline.js')
   const { extractLoopSpecs } = await import('../../extract/loop/counter.js')
+  const { extractAccessObligations } = await import('../../extract/loop/oob.js')
+  const { checkContract } = await import('../smt-bridge.js')
+  const files = walkFiles(target).filter((f) => /\.(js|mjs|cjs)$/.test(f.ext))
   const specs = []
-  for (const { abs, fileId } of walkFiles(target).filter((f) => /\.(js|mjs|cjs)$/.test(f.ext))) {
+  const obligations = []
+  for (const { abs, fileId } of files) {
     let code
     try { code = fs.readFileSync(abs, 'utf8') } catch { continue }
     for (const s of extractLoopSpecs(fileId, code)) specs.push(s)
+    for (const o of extractAccessObligations(fileId, code)) obligations.push(o)
   }
-  if (!specs.length) {
-    console.error(`# prove ${target}: no soundly-modelable counting loops found (only simple ascending for-loops are lifted; anything else is skipped, not guessed).`)
+  if (!specs.length && !obligations.length) {
+    console.error(`# prove ${target}: no soundly-modelable counting loops or array accesses found (anything not precisely modelable is skipped, not guessed).`)
     return 0
   }
-  console.error(`# prove ${target}: ${specs.length} counting loop(s) lifted — checking iterator bound-safety with z3`)
-  let allProved = true
-  for (const s of specs) {
-    const res = await proveLoop(s)
-    allProved = allProved && res.proved
-    console.log(formatProof(res))
+  let ok = true
+
+  if (specs.length) {
+    console.error(`# prove ${target}: ${specs.length} unit-stride loop(s) — iterator bound-safety`)
+    for (const s of specs) { const res = await proveLoop(s); ok = ok && res.proved; console.log(formatProof(res)) }
   }
-  return allProved ? 0 : 1
+
+  if (obligations.length) {
+    console.error(`# prove ${target}: ${obligations.length} counter-indexed array access(es) — bounds (0 <= idx < length)`)
+    for (const o of obligations) {
+      const r = await checkContract({ vars: o.vars, pre: o.pre, post: o.post, name: o.name })
+      if (r.preSat === 'unsat') { console.log(`○ ${o.name}: unreachable (path condition is infeasible) — no access`); continue }
+      if (r.entailed) { console.log(`✅ ${o.name}: in bounds — 0 <= idx < ${o.arr}.length proved by z3`); continue }
+      if (o.fullyModeled) { ok = false; console.log(`❌ ${o.name}: POSSIBLE out-of-bounds — not provably in bounds${r.counterexample ? ` (e.g. ${r.counterexample})` : ''}`) }
+      else console.log(`○ ${o.name}: not analyzed — a guarding condition could not be modeled (no claim, to avoid a false positive)`)
+    }
+  }
+  return ok ? 0 : 1
 }

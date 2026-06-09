@@ -545,6 +545,27 @@ test('★8 ITP loop-lift: sound extraction of counting loops from code + iterato
   assert.equal((await proveLoop(byGuard('i <= arr_length'))).proved, false, 'i <= arr.length is a real out-of-bounds → not proved')
 })
 
+test('★8 ITP per-access OOB: counter-indexed reads proved in-bounds; unguarded overshoot flagged; guarded (Merkle pattern) + step-2 proved safe', async () => {
+  const { extractAccessObligations } = await import('../src/extract/loop/oob.js')
+  const code = fs.readFileSync(root('examples/itp/access.js'), 'utf8')
+  const obs = extractAccessObligations('access.js', code)
+  const verdict = (o) => checkContract({ vars: o.vars, pre: o.pre, post: o.post })
+  // every arr[i] (index == the counter) is in bounds under its guard — including the step-2 loop.
+  const arrI = obs.filter((o) => o.idxDsl === 'i')
+  assert.ok(arrI.length >= 3, 'arr[i] accesses across all three loops are collected (incl. the step-2 loop)')
+  for (const o of arrI) assert.equal((await verdict(o)).entailed, true, `${o.name} proved in bounds`)
+  // arr[i+1]: the UNGUARDED read is possible-OOB; the ternary-GUARDED one (Merkle) is safe.
+  const next = obs.filter((o) => o.idxDsl === '(i + 1)')
+  assert.equal(next.length, 2, 'both arr[i+1] reads collected (unguarded + guarded)')
+  const guarded = next.find((o) => o.pre.some((p) => p.includes('(i + 1) < arr_length')))
+  const unguarded = next.find((o) => !o.pre.some((p) => p.includes('(i + 1) < arr_length')))
+  assert.ok(guarded && unguarded && guarded.fullyModeled && unguarded.fullyModeled, 'both fully modeled (sound OOB verdict allowed)')
+  assert.equal((await verdict(guarded)).entailed, true, 'guarded arr[i+1] (i+1<len ? …) proved safe via the path condition')
+  const u = await verdict(unguarded)
+  assert.equal(u.entailed, false, 'unguarded arr[i+1] is a possible out-of-bounds')
+  assert.ok(u.counterexample, 'z3 returns the OOB witness')
+})
+
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {
   // A graph WITH a cycle (a→b→c→a) plus c→d and x→a — stresses ancestors×descendants.
   const edges = [['a', 'b'], ['b', 'c'], ['c', 'a'], ['c', 'd'], ['x', 'a']]

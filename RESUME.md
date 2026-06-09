@@ -3,15 +3,16 @@
 > 本次会话存档点（2026-06-09，**★8 ITP 两刀：B 档 VCgen+z3 放电 + autoformalization 不变式合成，全零外部**）。承上批（框架模型 刀2）。本会话两刀：
 > **刀A — ITP 刀1（B 档自建 VCgen + 内置 z3）**：新 `src/verify/itp/`（`vcgen.js` `loopVCs` 纯逻辑构造三 VC、`prove.js` `proveLoop` 放电 + `runProveFile`）。**每条 VC = 一次 UNSAT 检查**：① `pre⇒inv`、③ `inv∧¬guard⇒post` 复用 `checkContract`；② 归纳步 `inv∧guard∧x'=body(x)⇒inv'` 用 smt-bridge 新增 **`checkInductive`**（撇号 `'` 原状态变量编码转移关系+frame，`'` 在 DSL 标识符里非法→不撞名）。CLI `prove <loop-spec.json>`。夹具 `sum-bound.loop.json`（耦合不变式 `sum==i` 真证 `sum==n`→PROVED）、`noninductive.loop.json`（非归纳→step VC 被反例 `i=0,sum=0` 驳）。
 > **刀B — autoformalization（§五·二 神经符号闭环：LLM 提议 + z3 处置）**：新 `src/verify/itp/synth.js` `synthesizeInvariant(spec)`——spec **缺 `invariant` 键**时,`hasLLM()` 关→ `needs-llm`+结构化 prompt（离线绝不臆造,同 ★3）;在线→ `callLLMText` 拿候选→ `parseInvariantResponse`→ **`proveLoop` z3 逐条放电(generate-and-check)**,三 VC 全过才 `proved`;失败把失败 VC+反例喂回有界精化。`prove` 在 spec 无 invariant 时**自动合成**（动态 import 避静态环）。夹具 `sum-bound.synth.json`（删 invariant 键→触发;离线 needs-llm）。
-> **合计**：engines **40→44**（+4）全绿、9 smoke、MCP 16-工具自检。**parity 纯增量**（新命令+新文件+一个 export，不动既有路径）→ `verify examples/sample-project` 仍 7、`refine` 仍 `getCount: unchecked`、40 既有测试全保。诚实落点:**闭合 `refine` 标的 `unchecked` 缺口**（循环体+不变式=那条 body-level VC）;loop spec 仍假定忠实转写代码（从 raw 源 lift spec 骨架=soundness 敏感,留待后续）。两刀已 **commit**（`016c079` + 本批）。本文件 + 自动记忆共同记录"我停在哪、下一步做什么"。
+> **刀C — MCP `prove` 工具（把前两刀暴露给 AI IDE，§四.5 deliverable 的另一半）**：`mcp/tools.js` 加第 **17** 工具 `prove`——`invariant` 给定→ `proveLoop` 放电;缺省→ `synthesizeInvariant`，**经 MCP sampling 让 IDE 自己的 LLM 提议不变式 → z3 验**（§五·二闭环经 MCP 跑通,IDE 的 AI 就是 proposer）。`test-mcp.js` 自检**扮演 IDE LLM** 回应 `sampling/createMessage`、端到端断言 proved。**用 `git stash` 隔离 `mcp/tools.js` 上无关未提交改动**→ commit 只含 prove 工具（WIP 已 pop 回工作树,仍未提交）。
+> **合计**：engines **40→44**（+4）全绿、9 smoke、**MCP 16→17-工具自检**（prove：放电 + 经 sampling 合成）。**parity 纯增量**（新命令+新文件+新 export+新 MCP 工具，不动既有路径）→ `verify examples/sample-project` 仍 7、`refine` 仍 `getCount: unchecked`、既有测试全保。诚实落点:**闭合 `refine` 标的 `unchecked` 缺口**（循环体+不变式=那条 body-level VC）;loop spec 仍假定忠实转写代码（从 raw 源 lift spec 骨架=soundness 敏感,留待后续）。三刀已 **commit**（`016c079` + `9e7df8c` + 本批）。本文件 + 自动记忆共同记录"我停在哪、下一步做什么"。
 
 ## ⏯️ 下个会话从这里开始（NEXT SESSION — START HERE）
 1. **进入仓库**：`cd U:/trae/todo_list/formal-atlas`（在 `main` 分支）。**注意**：工作树有**无关未提交改动**（`mcp/tools.js`/`package.json`/`.mcp.json`/`src/repair/loop.js` = MCP 描述/npm-publish 工作流），本刀**刻意未碰未提交**——勿混入你的 commit，也勿擅自还原（是另一条线的 WIP）。
-2. **验证存档可跑**：`npm test` → 应 **9 smoke + 44 engines + MCP 16-工具自检 全绿**（本会话 ★8 两刀 +4）。`node src/cli.js prove examples/itp/sum-bound.loop.json` → ✅ PROVED；`prove examples/itp/noninductive.loop.json` → ❌ step VC 反例；`prove examples/itp/sum-bound.synth.json`（无 invariant 键）→ 离线 `…needs-llm`（有 LLM 则自动合成+z3 验）。
+2. **验证存档可跑**：`npm test` → 应 **9 smoke + 44 engines + MCP 17-工具自检 全绿**（本会话 ★8 三刀；MCP 自检含 prove 放电 + 经 sampling 合成端到端）。`node src/cli.js prove examples/itp/sum-bound.loop.json` → ✅ PROVED；`prove examples/itp/noninductive.loop.json` → ❌ step VC 反例；`prove examples/itp/sum-bound.synth.json`（无 invariant 键）→ 离线 `…needs-llm`（有 LLM 则自动合成+z3 验）。
 3. **进度**：★1–★7 + 框架模型 刀1+刀2 + **★8 ITP 刀1（B 档 VCgen+z3）+ autoformalization（invariant 合成，本会话两刀）** 全部在 `main`。三阶段计划见 `docs/15`（框架，刀1+刀2 ✅、刀3 余）/`docs/13`（ITP，**B 档放电 ✅、autoformalization ✅、C 档外部 ITP 余**）/`docs/14`（IFDS）。
 4. **下一步（按杠杆排序，推荐①）**：
    - **① 从代码 lift loop-spec 骨架（autoformalization 的"前半"，最高杠杆但 soundness 敏感）**：现 `prove`/合成都吃**手写/IDE 转写**的 loop-spec（vars/pre/guard/body/post）;补上**从 raw JS 结构化抽取**那一半——抽取器发 `loop_guard`/`loop_body(var,expr)`/`loop_pre`/`loop_post` 候选事实,使 `prove <projectPath>` 能在真实代码（父仓 Merkle/crypto/rebac 循环）上跑。**关键纪律**:抽取必须 **sound**（误读循环→假证,是最坏结果,docs/13 反复强调"假信心比不证更糟"）——只抽能精确建模的简单计数/累加循环,复杂控制流诚实跳过（不臆测）。落点 `src/extract/`（注:现 8 文件=上限,新 extract 需起 `src/extract/loop/` 子目录）+ `itp/`。
-   - **② MCP `prove` 工具（机械收尾，低成本）**：`proveLoop`/`runProveFile`/`synthesizeInvariant` 已是干净 API，只差在 `mcp/tools.js` 加第 17 工具 + `test-mcp.js` 自检。**前置**：先决定如何处理 `mcp/tools.js` 那批无关未提交改动（要么先把它们独立 commit，要么单独起干净分支加 prove 工具）。
+   - **② ✅ MCP `prove` 工具已落地（本会话刀C）**：第 17 工具,放电 + 经 MCP sampling 合成（IDE LLM 提议→z3 验）,`test-mcp.js` 端到端自检。用 `git stash` 隔离了 `mcp/tools.js` 上无关 WIP（已 pop 回、仍未提交）。**留给你/未来**：把那批 WIP（MCP 描述/pillar/npm publishConfig）独立 commit 或丢弃。
    - **③ 真机在线实测合成**：有 `ANTHROPIC_API_KEY`/MCP-sampling 时跑 `prove sum-bound.synth.json`,确认 LLM 真能合成出 `0<=i && i<=n && sum==i` 且 z3 放行（离线已验 needs-llm 边界,在线闭环未真机验）。
    - **④ 框架模型 刀3 / C 档外部 ITP**：按需，本库收益有限（见 `docs/15 §五·刀3`、`docs/13 §五·一` C 档）。
 5. **怎么让我继续**：新会话里说「继续推进 formal-atlas，按 `formal-atlas/RESUME.md` 下一步」，或直接「从代码 lift loop-spec」/「加 MCP prove 工具」。我会先 `npm test` 确认存档、再开工。纪律：每刀 **夹具 + parity（纯增量或 flag 关位等价，git-stash 验）+ 真实库实测 + commit**。
@@ -28,7 +29,7 @@
 ## 验证（确认存档可跑）
 ```bash
 cd formal-atlas
-npm test                                                  # 9 smoke + 39 engines(★2/★3/★4/★5/★6/★7) + MCP 16-工具自检,全绿
+npm test                                                  # 9 smoke + 44 engines(★2/★3/★4/★5/★6/★7/★8) + MCP 17-工具自检,全绿
 node src/cli.js smt faithfulness examples/faithfulness/abs.faithful.json   # ✅ faithful + round-trip ✅ equivalent
 node src/cli.js verify examples/taint-interproc            # ★6 刀1：getName→innerHTML 跨调用真阳；rows()/consume 无误报
 node src/cli.js verify examples/taint-paramsink            # ★6 刀2：render(html)/runSql(sql) 真阳 2 条；sendJson(json) 抑制 1 条

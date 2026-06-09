@@ -150,6 +150,11 @@ export const TOOLS = [
     description: 'Spec-faithfulness eval (★4): score a contract/refinement against labeled accept-legal / reject-illegal samples — DECIDABLY (QF-LIA, no LLM, no solver in the grading loop). Flags `too-weak` (accepts an ILLEGAL sample — a vacuous/`true` spec) and `too-strong` (rejects a LEGAL one). Pass {vars, pre[], post[], samples:[{label:"legal"|"illegal", point:{var:val}}]}. Catches a ★3 closed loop that would self-certify a WRONG spec. Triggers when user asks: "is this spec faithful?", "grade the contract", "does the spec accept good / reject bad inputs?", "规约忠实吗", "给契约打忠实分".',
     inputSchema: { type: 'object', properties: { name: { type: 'string' }, vars: { type: 'object' }, pre: { type: 'array', items: { type: 'string' } }, post: { type: 'array', items: { type: 'string' } }, samples: { type: 'array', description: '[{label:"legal"|"illegal", point:{var:number|bool}}]' } }, required: ['samples'] },
   },
+  {
+    name: 'prove',
+    description: 'SMT (Z3) loop-invariant proof — ★8 ITP B-tier, self-built VCgen + built-in Z3, NO Dafny/Lean. Given a loop Hoare-spec {vars, pre, guard, body:[{var,expr}], post}: WITH an `invariant`, build the 3 verification conditions (entry pre⇒inv / inductive step inv∧guard∧body⇒inv′ / exit inv∧¬guard⇒post) and discharge them with Z3 — a machine-checked loop proof; a non-inductive invariant yields a concrete counterexample. WITHOUT an `invariant`, SYNTHESIZE one: the LLM proposes candidates (via MCP sampling) and Z3 disposes (generate-and-check, bounded refinement on the counterexample) — offline returns `needs-llm`, never a fabricated invariant. Triggers when user asks: "prove this loop", "verify the loop invariant", "is this invariant inductive?", "find/synthesize a loop invariant", "证明循环", "循环不变式归纳吗?", "合成循环不变式".',
+    inputSchema: { type: 'object', properties: { name: { type: 'string' }, vars: { type: 'object', description: 'name -> "int"|"bool"' }, pre: { type: 'array', items: { type: 'string' }, description: 'state at loop entry' }, guard: { type: 'string', description: 'loop condition' }, invariant: { type: 'array', items: { type: 'string' }, description: 'OMIT to synthesize one (LLM proposes, Z3 disposes)' }, body: { type: 'array', items: { type: 'object' }, description: '[{var, expr}] assignments per iteration' }, post: { type: 'array', items: { type: 'string' } } }, required: ['vars', 'guard', 'body', 'post'] },
+  },
 ]
 
 export async function runTool(name, a = {}, onProgress) {
@@ -356,6 +361,20 @@ export async function runTool(name, a = {}, onProgress) {
     case 'faithfulness': {
       const { scoreFaithfulness } = await import('../src/verify/faithfulness.js')
       return j(scoreFaithfulness({ name: a.name, vars: a.vars, pre: a.pre, post: a.post }, a.samples || []))
+    }
+    case 'prove': {
+      // ★8 ITP: discharge a loop invariant with the built-in z3, or — when no
+      // `invariant` is given — synthesize one (the IDE's LLM proposes via MCP
+      // sampling, z3 disposes). See docs/13 §五·一 (B-tier) / §五·二 (synthesis).
+      const spec = { name: a.name, vars: a.vars, pre: a.pre, guard: a.guard, invariant: a.invariant, body: a.body, post: a.post }
+      if (spec.invariant === undefined) {
+        if (onProgress) onProgress('synthesizing loop invariant (LLM proposes, z3 disposes)...')
+        const { synthesizeInvariant } = await import('../src/verify/itp/synth.js')
+        return j(await synthesizeInvariant(spec))
+      }
+      if (onProgress) onProgress('discharging the 3 loop VCs with z3...')
+      const { proveLoop } = await import('../src/verify/itp/prove.js')
+      return j(await proveLoop(spec))
     }
     default:
       throw new Error(`unknown tool: ${name}`)

@@ -22,7 +22,15 @@ srv.stdout.on('data', (c) => {
   let nl
   while ((nl = buf.indexOf('\n')) >= 0) {
     const l = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1)
-    if (l) responses.push(JSON.parse(l))
+    if (!l) continue
+    const msg = JSON.parse(l)
+    // The server may request sampling (the §五·二 invariant-synthesis loop). Act as
+    // the IDE's LLM: propose the correct loop invariant — the server's z3 then checks it.
+    if (msg.method === 'sampling/createMessage') {
+      send({ jsonrpc: '2.0', id: msg.id, result: { role: 'assistant', content: { type: 'text', text: '{"invariant": ["0 <= i", "i <= n", "sum == i"]}' } } })
+    } else {
+      responses.push(msg)
+    }
   }
 })
 
@@ -56,8 +64,19 @@ assert.ok(ver.count >= 5, 'governance violations present')
 const con = await call(7, 'contract', { vars: { x: 'int', y: 'int' }, pre: ['x > 0', 'y > 0'], post: ['x + y > 0'] })
 assert.equal(con.entailed, true)
 
+// ★8 prove — discharge a loop invariant (with `invariant`) via the built-in z3.
+const sumSpec = { name: 'sum', vars: { i: 'int', n: 'int', sum: 'int' }, pre: ['i == 0', 'sum == 0', 'n >= 0'], guard: 'i < n', body: [{ var: 'i', expr: 'i + 1' }, { var: 'sum', expr: 'sum + 1' }], post: ['sum == n'] }
+const prv = await call(8, 'prove', { ...sumSpec, invariant: ['0 <= i', 'i <= n', 'sum == i'] })
+assert.equal(prv.proved, true, 'prove discharges a sound loop invariant (all 3 VCs) via z3')
+
+// ★8 prove — NO invariant ⇒ synthesize via MCP sampling (the client above plays the
+// LLM), then z3 verifies. End-to-end neurosymbolic loop through MCP (docs/13 §五·二).
+const syn = await call(9, 'prove', sumSpec)
+assert.equal(syn.status, 'proved', 'prove without an invariant synthesizes one via MCP sampling, then z3 confirms it')
+assert.deepEqual(syn.invariant, ['0 <= i', 'i <= n', 'sum == i'], 'the sampled invariant is the one z3 verified')
+
 clearTimeout(guard)
-console.log('MCP smoke OK — initialize, tools/list(6+), reaches=true, dead_code=[formatBytes,legacyCheck], impact=[handleRequest], verify>=5, contract entailed')
+console.log('MCP smoke OK — initialize, tools/list(6+), reaches=true, dead_code=[formatBytes,legacyCheck], impact=[handleRequest], verify>=5, contract entailed, prove proved + synthesized-via-sampling')
 srv.stdin.end()
 srv.kill()
 process.exit(0)

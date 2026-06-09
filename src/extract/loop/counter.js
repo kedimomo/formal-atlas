@@ -8,13 +8,19 @@
  * recognizer is deliberately CONSERVATIVE — it models ONLY the canonical ascending
  * counting loop and emits NOTHING for anything it cannot capture exactly:
  *
- *   for (let i = INIT; i </<= BOUND; i++|i+=k|i=i+k)  { body with no … }
+ *   for (let i = INIT; i </<= BOUND; i++ | i+=1 | i=i+1)  { body with no … }
  *
- * where INIT/BOUND are int literals or identifiers, k is a positive int literal,
- * and the body does NOT (anywhere, incl. closures) reassign the counter or bound,
- * and contains NO break/continue/return/throw (directly), and NO nested loop.
- * Calls, conditionals, array accesses, other-variable assignments are fine — they
- * cannot change the integer counter, so iterator bound-safety still holds.
+ * where INIT is an int literal or identifier, BOUND is an int literal, an
+ * identifier, or a non-computed member like `arr.length` (array iteration — the
+ * most common real shape). v1 models the unit stride only: for step>1 the bound
+ * `i<=BOUND` is mechanically false on the last stride even when the code is safe,
+ * so strided loops are skipped (they need per-access OOB obligations to be useful).
+ * The body must NOT (anywhere, incl. closures) reassign the counter or an
+ * identifier bound, and — when the bound is `arr.length` — must NOT mutate `arr`
+ * (reassign it, write a member/element, or call a method on it), since that would
+ * change the bound. It must contain NO break/continue/return/throw (directly) and
+ * NO nested loop. Calls, conditionals, and array READS (`arr[i]`) are fine — they
+ * cannot change the integer counter or an unmutated length.
  *
  * The property proved is ITERATOR BOUND-SAFETY: with the auto-invariant
  * `INIT <= i <= BOUND` (mechanically known for counting loops, so it discharges
@@ -60,6 +66,22 @@ function parseInit(init) {
   return null
 }
 
+/**
+ * A loop bound → DSL term. Accepts an int literal, a bare identifier, or a
+ * non-computed member like `arr.length` (mapped to the synthetic int var
+ * `arr_length`). `name` is set only for an identifier bound (reassignment guard);
+ * `base` is set only for a member bound (the object whose mutation would change
+ * the bound — guarded against in the body).
+ */
+function boundTerm(node) {
+  if (node?.type === 'Literal' && Number.isInteger(node.value)) return { expr: String(node.value), varName: null, name: null, base: null }
+  if (node?.type === 'Identifier') return { expr: node.name, varName: node.name, name: node.name, base: null }
+  if (node?.type === 'MemberExpression' && !node.computed && node.object?.type === 'Identifier' && node.property?.type === 'Identifier') {
+    return { expr: `${node.object.name}_${node.property.name}`, varName: `${node.object.name}_${node.property.name}`, name: null, base: node.object.name }
+  }
+  return null
+}
+
 /** for-update → positive integer step for `i++` / `i += k` / `i = i + k`, else null. */
 function parseStep(upd, counter) {
   if (upd?.type === 'UpdateExpression' && upd.operator === '++' && upd.argument?.name === counter) return 1
@@ -75,15 +97,23 @@ function parseStep(upd, counter) {
 }
 
 /** True iff the body is safe to model: no control-flow escape (directly), no
- *  nested loop, and no reassignment of the counter or bound (at any nesting). */
-function bodySafe(body, counter, boundName) {
+ *  nested loop, no reassignment of the counter or an identifier bound, and — for
+ *  a member bound `base.prop` — no mutation of `base` (reassign / member-write /
+ *  method call) that could change the bound. */
+function bodySafe(body, counter, boundName, boundBase) {
   let safe = true
   function scan(node, inFn) {
     if (!safe || !node || typeof node.type !== 'string') return
     if (LOOP_TYPES.has(node.type)) { safe = false; return }
     if (inFn === 0 && /^(Break|Continue|Return|Throw)Statement$/.test(node.type)) { safe = false; return }
-    if (node.type === 'AssignmentExpression' && node.left?.type === 'Identifier' && (node.left.name === counter || node.left.name === boundName)) { safe = false; return }
-    if (node.type === 'UpdateExpression' && node.argument?.type === 'Identifier' && (node.argument.name === counter || node.argument.name === boundName)) { safe = false; return }
+    if (node.type === 'AssignmentExpression' && node.left?.type === 'Identifier' && (node.left.name === counter || node.left.name === boundName || node.left.name === boundBase)) { safe = false; return }
+    if (node.type === 'UpdateExpression' && node.argument?.type === 'Identifier' && (node.argument.name === counter || node.argument.name === boundName || node.argument.name === boundBase)) { safe = false; return }
+    if (boundBase) {
+      // base.x = … / base[x] = … (member/element write), or base.method(…) — any of
+      // these could change base's length, so the bound is not loop-invariant → skip.
+      if (node.type === 'AssignmentExpression' && node.left?.type === 'MemberExpression' && node.left.object?.type === 'Identifier' && node.left.object.name === boundBase) { safe = false; return }
+      if (node.type === 'CallExpression' && node.callee?.type === 'MemberExpression' && node.callee.object?.type === 'Identifier' && node.callee.object.name === boundBase) { safe = false; return }
+    }
     const next = inFn + (FN_TYPES.has(node.type) ? 1 : 0)
     for (const k of Object.keys(node)) {
       if (SKIP_KEYS.has(k)) continue
@@ -103,24 +133,27 @@ function recognize(node, fileId) {
   const { counter, init } = initR
   const test = node.test
   if (test?.type !== 'BinaryExpression' || !ASC.has(test.operator) || test.left?.type !== 'Identifier' || test.left.name !== counter) return null
-  const bound = intTerm(test.right)
+  const bound = boundTerm(test.right)
   if (!bound) return null
   const step = parseStep(node.update, counter)
-  if (step == null) return null
-  if (!bodySafe(node.body, counter, bound.name)) return null
+  if (step !== 1) return null // v1: step-1 only. For step>1 the iterator bound `i<=BOUND`
+  // is mechanically false (i reaches BOUND+1 on the last stride) even when every array
+  // access is safely guarded — flagging those would be a false positive. Strided loops
+  // need per-access OOB obligations (future) to be useful, so we skip them, not guess.
+  if (!bodySafe(node.body, counter, bound.name, bound.base)) return null
 
   const vars = { [counter]: 'int' }
   if (init.name) vars[init.name] = 'int'
-  if (bound.name) vars[bound.name] = 'int'
+  if (bound.varName) vars[bound.varName] = 'int'
   const ln = node.loc?.start?.line ?? 0
   return {
-    name: `${fileId}:${ln} (${counter} ${test.operator} ${bound.str}, ${counter}+=${step})`,
+    name: `${fileId}:${ln} (${counter} ${test.operator} ${bound.expr})`,
     vars,
-    pre: [`${counter} == ${init.str}`, `${init.str} <= ${bound.str}`], // counter init + loop-entered well-formedness
-    guard: `${counter} ${test.operator} ${bound.str}`,
+    pre: [`${counter} == ${init.str}`, `${init.str} <= ${bound.expr}`], // counter init + loop-entered well-formedness (for arr.length this is the always-true 0 <= len)
+    guard: `${counter} ${test.operator} ${bound.expr}`,
     body: [{ var: counter, expr: `${counter} + ${step}` }],
-    invariant: [`${init.str} <= ${counter}`, `${counter} <= ${bound.str}`], // mechanical bound invariant → discharges offline
-    post: [`${counter} <= ${bound.str}`], // iterator never overshoots the bound
+    invariant: [`${init.str} <= ${counter}`, `${counter} <= ${bound.expr}`], // mechanical bound invariant → discharges offline
+    post: [`${counter} <= ${bound.expr}`], // iterator never overshoots the bound
     loc: ln,
   }
 }

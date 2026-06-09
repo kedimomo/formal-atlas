@@ -40,4 +40,32 @@ export function withBreak(n) {
   }
 }
 
+// SAFE (array-length bound) — read-only iteration to arr.length: the index `i`
+// provably stays in [0, arr.length], so every `arr[i]` read is in bounds. PROVED.
+export function sumArr(arr) {
+  let s = 0
+  for (let i = 0; i < arr.length; i++) {
+    s += arr[i]
+  }
+  return s
+}
+
+// OOB (off-by-one on a length) — `i <= arr.length` reads arr[arr.length], one past
+// the end. The bound invariant `i <= arr.length` is not inductive → z3 REFUTES it.
+export function readPastEnd(arr) {
+  let s = 0
+  for (let i = 0; i <= arr.length; i++) {
+    s += arr[i]
+  }
+  return s
+}
+
+// SKIPPED — the body mutates the bound's base (`arr.push` grows arr.length every
+// iteration), so the bound is not loop-invariant; the extractor refuses to model it.
+export function growing(arr) {
+  for (let i = 0; i < arr.length; i++) {
+    arr.push(i)
+  }
+}
+
 function record() { /* opaque side-effect — cannot mutate the integer counter */ }

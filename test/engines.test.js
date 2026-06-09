@@ -529,18 +529,20 @@ test('★8 ITP autoformalization: generate-and-check — a parsed candidate is a
 test('★8 ITP loop-lift: sound extraction of counting loops from code + iterator bound-safety (safe proved, overshoot refuted, unsound-to-model skipped)', async () => {
   const code = fs.readFileSync(root('examples/itp/loops.js'), 'utf8')
   const specs = extractLoopSpecs('loops.js', code)
-  // Only the two cleanly-modelable counting loops are lifted; `tricky` (reassigns the
-  // counter) and `withBreak` (early exit) are SKIPPED — never modeled, never guessed.
-  assert.equal(specs.length, 2, 'exactly the two simple counting loops are lifted; the unsound-to-model ones are skipped')
-  const safe = specs.find((s) => s.guard === 'i < n')
-  const over = specs.find((s) => s.guard === 'i <= n')
-  assert.ok(safe && over, 'the `< n` and `<= n` loops are both recognized')
-  // safe: the auto-invariant 0<=i<=n discharges OFFLINE (no LLM) — iterator bound-safe.
-  assert.equal((await proveLoop(safe)).proved, true, 'bound-safety PROVED for the step-1 `<` loop')
-  // overshoot: i reaches n+1; the bound invariant is not inductive → z3 refutes it.
-  const r = await proveLoop(over)
-  assert.equal(r.proved, false, 'the off-by-one `<= n` loop is flagged — bound-safety does not hold')
-  assert.ok(r.vcs.find((v) => v.kind === 'step' && !v.discharged && v.counterexample), 'z3 returns the overshoot counterexample on the inductive step')
+  // Lifted: sumTo (i<n), offByOne (i<=n), sumArr (i<arr.length), readPastEnd (i<=arr.length).
+  // Skipped: tricky (reassigns counter), withBreak (early exit), growing (arr.push mutates
+  // the bound's base) — never modeled, never guessed.
+  assert.equal(specs.length, 4, 'four soundly-modelable counting loops are lifted; the three unsound ones are skipped')
+  const byGuard = (g) => specs.find((s) => s.guard === g)
+  // plain-identifier bound: the auto-invariant 0<=i<=n discharges OFFLINE (no LLM).
+  assert.equal((await proveLoop(byGuard('i < n'))).proved, true, 'bound-safety PROVED for the step-1 `< n` loop')
+  const rN = await proveLoop(byGuard('i <= n'))
+  assert.equal(rN.proved, false, 'the off-by-one `<= n` loop is flagged')
+  assert.ok(rN.vcs.find((v) => v.kind === 'step' && !v.discharged && v.counterexample), 'z3 returns the overshoot counterexample')
+  // array-length bound: for(i=0;i<arr.length;i++) — every arr[i] read is in bounds.
+  assert.equal((await proveLoop(byGuard('i < arr_length'))).proved, true, 'iteration to arr.length is bound-safe (arr[i] in bounds)')
+  // off-by-one on a length: i <= arr.length reads arr[arr.length] — a real OOB, refuted.
+  assert.equal((await proveLoop(byGuard('i <= arr_length'))).proved, false, 'i <= arr.length is a real out-of-bounds → not proved')
 })
 
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {

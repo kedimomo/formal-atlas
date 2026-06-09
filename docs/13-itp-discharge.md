@@ -41,6 +41,8 @@
 ## 五·二、与 MCP sampling 的关系（关键）
 **MCP sampling 给不了 prover**。sampling 给的是 **LLM**——LLM 可以帮**写**不变式/标注（autoformalization），但**证明必须求解器/内核检**。神经符号闭环:**IDE 的 AI（经 sampling）写不变式 → z3(B 档)或外部 ITP(C 档)放电 → 过了才算证明**;不过把错喂回 LLM 重写（同 ★3 repair）。注意:**B 档的 z3 已内置——LLM 写不变式 + z3 放电,可全程零外部**;只有 C 档才需外部内核。
 
+**✅ autoformalization 续刀已落地（2026-06-09，invariant synthesis = LLM 提议 + z3 处置，零外部）**:`src/verify/itp/synth.js` 的 `synthesizeInvariant(spec)`——给一个**缺 `invariant` 的** loop Hoare-spec（vars/pre/guard/body/post），① `hasLLM()` 关→ `needs-llm` + 结构化 prompt（**离线绝不臆造不变式**,与 ★3 repair 同诚实边界）;② 在线→ `callLLMText`（复用 ★3 同一 MCP-sampling/Anthropic/OpenAI 传输）拿候选不变式 JSON → `parseInvariantResponse` 解析 → **`proveLoop({...spec, invariant})` 用内置 z3 逐条放电（generate-and-check）**——三 VC 全过才 `proved`;③ 失败把**失败的那条 VC + z3 反例**喂回 LLM,有界 `attempts` 轮精化（"提议→反驳→再提议"的闭环,同 repairReal）。`prove <spec.json>` 在 spec **无 `invariant` 键**时自动走合成（动态 import `synth.js`,避免与 `prove.js` 成静态环）。**诚实分工**:loop spec 仍假定为代码的忠实转写（从 raw 源 lift spec 骨架——结构化 body/guard 抽取——soundness 敏感,仍**留待后续**,见 §四 / RESUME);此刀被检的产物是**不变式**——z3 保证它对**给定 spec** 归纳且证后置,创造性那步（发明不变式）被机器核验。夹具 `examples/itp/sum-bound.synth.json`（同 sum-bound 但删 `invariant` 键 → 触发合成;期望 z3 找到 `0<=i && i<=n && sum==i`;离线 `needs-llm`）。2 测试（offline 边界 + generate-and-check 门:好候选放行/非归纳候选被 z3 拒,engines **42→44**）。parity:纯增量,opt-in（仅当 invariant 缺失触发）,with-invariant 放电路径不变。**这把 §五·二 的神经符号闭环从理念落成可跑代码**:`prove` 不再只吃带不变式的手写 spec,而能在有 LLM 时**自己合成并机器验证**不变式。
+
 ## 六、范围与非目标
 - **是**：把已诚实标 `unchecked` 的义务真正放电；可判定档继续走 z3（不退化）；flag-gated、parity。
 - **非**：不自带 prover 二进制（破坏零安装）；不在 prover 缺席时假装证明；不追全自动证明所有性质（不可判定，靠标注 + 交互）。

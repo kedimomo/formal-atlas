@@ -63,18 +63,28 @@ export async function runProveFile(target) {
   try { isFile = fs.statSync(target).isFile() } catch { /* missing path */ }
   if (!isFile || !target.endsWith('.json')) {
     console.error('# prove expects a loop Hoare-spec JSON: { vars, pre, guard, invariant, body:[{var,expr}], post }.')
-    console.error('# B-tier VCgen + built-in Z3 (docs/13 §五·一) discharges loop invariants WITHOUT Dafny/Lean; lifting')
-    console.error('# invariants from a raw project path (LLM autoformalization, §五·二) is not wired yet.')
+    console.error('# With an `invariant`: B-tier VCgen + built-in Z3 discharges it (docs/13 §五·一), WITHOUT Dafny/Lean.')
+    console.error('# WITHOUT an `invariant`: synthesize one (LLM proposes, z3 disposes — §五·二; offline ⇒ needs-llm).')
     console.log('example: formal-atlas prove examples/itp/sum-bound.loop.json')
     return 2
   }
   const parsed = JSON.parse(fs.readFileSync(target, 'utf8'))
   const specs = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.loops) ? parsed.loops : [parsed])
+  let synth = null
   let allProved = true
   for (const s of specs) {
-    const res = await proveLoop(s)
-    allProved = allProved && res.proved
-    console.log(formatProof(res))
+    if (s && s.invariant === undefined) {
+      // No invariant supplied ⇒ synthesize one (LLM proposes, z3 disposes — §五·二).
+      // Dynamic import keeps synth.js → prove.js a one-way edge (no static cycle).
+      synth = synth || await import('./synth.js')
+      const res = await synth.synthesizeInvariant(s)
+      allProved = allProved && res.status === 'proved'
+      console.log(synth.formatSynth(res))
+    } else {
+      const res = await proveLoop(s)
+      allProved = allProved && res.proved
+      console.log(formatProof(res))
+    }
   }
   return allProved ? 0 : 1
 }

@@ -21,6 +21,7 @@ import { pointsTo } from '../src/verify/pointsto/andersen.js'
 import { closureFromEdges, deleteEdge } from '../src/verify/closure-delta.js'
 import { proveLoop } from '../src/verify/itp/prove.js'
 import { loopVCs } from '../src/verify/itp/vcgen.js'
+import { synthesizeInvariant, parseInvariantResponse } from '../src/verify/itp/synth.js'
 import fs from 'node:fs'
 
 const ref = (routine, v, phi, kind) => ({ pred: 'refinement', args: [routine, v, phi, kind] })
@@ -497,6 +498,31 @@ test('★8 ITP B-tier: a non-inductive invariant fails the STEP VC with a concre
   assert.equal(init.discharged, true, 'the invariant holds on loop entry')
   assert.equal(step.discharged, false, 'the induction step is refuted by z3')
   assert.ok(step.counterexample && /\bsum=/.test(step.counterexample), 'the counterexample names the breaking pre-state')
+})
+
+test('★8 ITP autoformalization: invariant synthesis is honest offline (needs-llm) and z3-gated when online', async () => {
+  const spec = JSON.parse(fs.readFileSync(root('examples/itp/sum-bound.synth.json'), 'utf8'))
+  assert.equal(spec.invariant, undefined, 'the synthesis fixture omits the invariant on purpose')
+  const r = await synthesizeInvariant(spec)
+  if (r.status === 'needs-llm') {
+    // No LLM ⇒ no invented invariant, but a structured prompt carrying the obligation.
+    assert.ok(r.prompt.includes(spec.guard) && /STRICT JSON/.test(r.prompt), 'the prompt carries the loop spec + the output contract')
+  } else {
+    // LLM present ⇒ the verdict is z3-gated: a `proved` must really discharge all 3 VCs.
+    assert.ok(['proved', 'unproven'].includes(r.status))
+    if (r.status === 'proved') assert.equal((await proveLoop({ ...spec, invariant: r.invariant })).proved, true, 'a synthesized invariant claimed proved must really pass all 3 VCs')
+  }
+})
+
+test('★8 ITP autoformalization: generate-and-check — a parsed candidate is accepted iff z3 discharges it (LLM proposes, z3 disposes)', async () => {
+  const spec = JSON.parse(fs.readFileSync(root('examples/itp/sum-bound.synth.json'), 'utf8'))
+  // The "LLM proposes" half: tolerate noise around the STRICT-JSON object.
+  const good = parseInvariantResponse('here you go {"invariant": ["0 <= i", "i <= n", "sum == i"]} done')
+  assert.deepEqual(good, ['0 <= i', 'i <= n', 'sum == i'])
+  assert.equal(parseInvariantResponse('no json here'), null, 'a non-JSON reply yields no candidate')
+  // The "z3 disposes" half: the correct invariant discharges; a non-inductive one is refuted.
+  assert.equal((await proveLoop({ ...spec, invariant: good })).proved, true, 'the correct invariant proves the loop')
+  assert.equal((await proveLoop({ ...spec, invariant: ['sum <= i'] })).proved, false, 'a non-inductive candidate is rejected by z3')
 })
 
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {

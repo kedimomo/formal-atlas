@@ -1,0 +1,12 @@
+{
+  "_doc": "★8 autoformalization demo (docs/13 §五·二). SAME loop as sum-bound.loop.json but with NO `invariant` key — so `prove` tries to SYNTHESIZE one: the LLM proposes candidate invariant clauses, z3 (via proveLoop) checks every one, and a candidate is accepted ONLY if all 3 VCs discharge (generate-and-check; failures + counterexamples are fed back for bounded refinement). Offline (no ANTHROPIC_API_KEY/OPENAI_API_KEY/MCP-sampling) it degrades honestly to `needs-llm` with the structured prompt — never a fabricated invariant. The invariant z3 should find here is `0 <= i && i <= n && sum == i`.",
+  "name": "bounded-accumulator-synth",
+  "vars": { "i": "int", "n": "int", "sum": "int" },
+  "pre": ["i == 0", "sum == 0", "n >= 0"],
+  "guard": "i < n",
+  "body": [
+    { "var": "i", "expr": "i + 1" },
+    { "var": "sum", "expr": "sum + 1" }
+  ],
+  "post": ["sum == n"]
+}

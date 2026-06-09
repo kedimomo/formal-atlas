@@ -566,6 +566,40 @@ test('★8 ITP per-access OOB: counter-indexed reads proved in-bounds; unguarded
   assert.ok(u.counterexample, 'z3 returns the OOB witness')
 })
 
+test('★8 affine bounds + escape tolerance: arr.length-1 proves arr[i+1]; escape loops are prove-only (no false OOB)', async () => {
+  const { extractAccessObligations } = await import('../src/extract/loop/oob.js')
+  const code = fs.readFileSync(root('examples/itp/affine.js'), 'utf8')
+  const verdict = (o) => checkContract({ vars: o.vars, pre: o.pre, post: o.post })
+
+  // Iterator-bound: only the escape-FREE affine loop (pairSums, `i < arr.length - 1`) is
+  // lifted; the two escape loops (early return / break) are skipped, as for any escape loop.
+  const specs = extractLoopSpecs('affine.js', code)
+  assert.equal(specs.length, 1, 'only the no-escape affine loop gets an iterator-bound spec')
+  assert.equal(specs[0].guard, 'i < arr_length - 1', 'the affine bound is lifted verbatim into the spec')
+  assert.equal((await proveLoop(specs[0])).proved, true, 'the iterator stays within arr.length - 1 (affine bound proved)')
+
+  const obs = extractAccessObligations('affine.js', code)
+  // Every arr[i] is in bounds — including indexOf's, whose loop has an early `return`
+  // (escape-tolerant PROVE: proving safe never needs the escape).
+  const arrI = obs.filter((o) => o.idxDsl === 'i')
+  assert.ok(arrI.length >= 2, 'arr[i] from pairSums and the early-return loop are both collected')
+  for (const o of arrI) assert.equal((await verdict(o)).entailed, true, `${o.name} proved in bounds`)
+
+  // arr[i+1] appears twice: pairSums (affine-safe, fullyModeled) and guardedByBreak
+  // (safe only via the break we don't model → must be prove-only, never flagged).
+  const next = obs.filter((o) => o.idxDsl === '(i + 1)')
+  assert.equal(next.length, 2, 'both arr[i+1] reads collected (affine-safe + break-guarded)')
+  const affineSafe = next.find((o) => o.fullyModeled)
+  const escapeOnly = next.find((o) => !o.fullyModeled)
+  assert.ok(affineSafe && escapeOnly, 'one is fully-modeled (pairSums), one is escape-only (guardedByBreak)')
+  assert.equal((await verdict(affineSafe)).entailed, true, 'arr[i+1] proved safe directly by the affine arr.length-1 bound')
+  // The soundness gate: the break-guarded access is NOT provable from the bound alone,
+  // and because its loop has an escape it is reported "not analyzed" (fullyModeled=false),
+  // NEVER flagged as OOB — the break could be exactly what keeps it safe (误报 0).
+  assert.equal((await verdict(escapeOnly)).entailed, false, 'break-guarded arr[i+1] is not provable from the bound alone')
+  assert.equal(escapeOnly.fullyModeled, false, 'an escape-loop access is prove-only → not-analyzed, never a false positive')
+})
+
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {
   // A graph WITH a cycle (a→b→c→a) plus c→d and x→a — stresses ancestors×descendants.
   const edges = [['a', 'b'], ['b', 'c'], ['c', 'a'], ['c', 'd'], ['x', 'a']]

@@ -12,15 +12,20 @@
  * for ANY step (it reasons about the access, not the iterator's exit value) and it
  * uses path conditions, so a guarded access like the Merkle pattern
  *     right = i + 1 < arr.length ? arr[i + 1] : arr[i]
- * is PROVEN safe, while an unguarded `arr[i + 1]` is flagged.
+ * is PROVEN safe, while an unguarded `arr[i + 1]` is flagged. With an AFFINE bound
+ * `for (i=0; i < arr.length - 1; i++)` (the adjacent-pairs idiom), `arr[i + 1]` is
+ * proven directly from the bound.
  *
  * SOUNDNESS / "误报 0": we only build an obligation for an access whose index is a
- * decidable expression MENTIONING THE COUNTER (the loop-iteration question). A
- * `possible-OOB` verdict is only trusted when the index AND all path conditions were
- * fully modeled (`fullyModeled`); if a guard could not be modeled, the caller must
- * NOT report OOB (the dropped guard might be exactly what makes it safe).
+ * decidable expression MENTIONING THE COUNTER (the loop-iteration question), and only
+ * for the array whose `.length` the loop bound rests on (so the guard relates them). A
+ * `possible-OOB` verdict is only TRUSTED (`fullyModeled`) when the index AND all path
+ * conditions were modeled AND the loop has no ignored control-flow escape: if a guard
+ * could not be modeled, or a break/return could itself be the missing guard, the caller
+ * must NOT report OOB. Proving an access SAFE is always sound (ignored escapes only
+ * remove hypotheses); only the flag direction needs the `fullyModeled` gate.
  */
-import { parse, parseLoop } from './counter.js'
+import { parse, parseLoop } from './header.js'
 
 const SKIP_KEYS = new Set(['type', 'loc', 'start', 'end', 'range'])
 const FN_TYPES = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'])
@@ -104,7 +109,7 @@ export function extractAccessObligations(fileId, code) {
     if (node.type === 'ForStatement') {
       const ctx = parseLoop(node)
       if (ctx) {
-        const { counter, init, bound, op } = ctx
+        const { counter, init, bound, op, hasEscape } = ctx
         const vars = { [counter]: 'int' }
         if (init.name) vars[init.name] = 'int'
         if (bound.varName) vars[bound.varName] = 'int'
@@ -112,18 +117,25 @@ export function extractAccessObligations(fileId, code) {
         const accesses = []
         collectAccesses(node.body, counter, vars, [], false, accesses)
         for (const a of accesses) {
-          // SOUND / no-false-positive scope: only verify accesses to the array that
-          // BOUNDS the loop (arr.length === the loop bound). Then the guard directly
-          // bounds the index. For an access to a DIFFERENT array we have no relation
-          // between its length and the bound, so we cannot prove safety AND must not
-          // flag it (the array may be sized to the bound by construction) — skip it.
-          if (a.arrLen !== bound.expr) continue
+          // SOUND / no-false-positive scope: only verify accesses to the array whose
+          // .length the loop bound RESTS ON (a.arr === bound.base). Then the guard
+          // `i </<= base.length [± K]` directly bounds the index (both reference the same
+          // synthetic `${base}_length` var). For an access to a DIFFERENT array we have no
+          // relation between its length and the bound, so we can neither prove safety nor
+          // flag it (the array may be sized to fit by construction) — skip it. (Identifier
+          // / literal bounds have no base array, so they yield no access obligations.)
+          if (!bound.base || a.arr !== bound.base) continue
           obligations.push({
             name: `${fileId}:${a.loc} ${a.arr}[${a.idxDsl}]`,
             vars: { ...vars },
             pre: [`${init.str} <= ${counter}`, guard, `${a.arrLen} >= 0`, ...a.conds],
             post: [`0 <= ${a.idxDsl}`, `${a.idxDsl} < ${a.arrLen}`],
-            arr: a.arr, idxDsl: a.idxDsl, loc: a.loc, fullyModeled: !a.dropped,
+            // fullyModeled gates the `possible-OOB` verdict (a trusted flag). It requires
+            // BOTH that no guarding condition was dropped (a.dropped) AND that the loop has
+            // no ignored control-flow escape (hasEscape): a break/return could be exactly
+            // what makes a non-bound-provable access safe, so in an escape loop we PROVE
+            // ONLY — an access we cannot prove is reported "not analyzed", never flagged.
+            arr: a.arr, idxDsl: a.idxDsl, loc: a.loc, fullyModeled: !a.dropped && !hasEscape,
           })
         }
       }

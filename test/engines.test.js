@@ -22,6 +22,7 @@ import { closureFromEdges, deleteEdge } from '../src/verify/closure-delta.js'
 import { proveLoop } from '../src/verify/itp/prove.js'
 import { loopVCs } from '../src/verify/itp/vcgen.js'
 import { synthesizeInvariant, parseInvariantResponse } from '../src/verify/itp/synth.js'
+import { extractLoopSpecs } from '../src/extract/loop/counter.js'
 import fs from 'node:fs'
 
 const ref = (routine, v, phi, kind) => ({ pred: 'refinement', args: [routine, v, phi, kind] })
@@ -523,6 +524,23 @@ test('★8 ITP autoformalization: generate-and-check — a parsed candidate is a
   // The "z3 disposes" half: the correct invariant discharges; a non-inductive one is refuted.
   assert.equal((await proveLoop({ ...spec, invariant: good })).proved, true, 'the correct invariant proves the loop')
   assert.equal((await proveLoop({ ...spec, invariant: ['sum <= i'] })).proved, false, 'a non-inductive candidate is rejected by z3')
+})
+
+test('★8 ITP loop-lift: sound extraction of counting loops from code + iterator bound-safety (safe proved, overshoot refuted, unsound-to-model skipped)', async () => {
+  const code = fs.readFileSync(root('examples/itp/loops.js'), 'utf8')
+  const specs = extractLoopSpecs('loops.js', code)
+  // Only the two cleanly-modelable counting loops are lifted; `tricky` (reassigns the
+  // counter) and `withBreak` (early exit) are SKIPPED — never modeled, never guessed.
+  assert.equal(specs.length, 2, 'exactly the two simple counting loops are lifted; the unsound-to-model ones are skipped')
+  const safe = specs.find((s) => s.guard === 'i < n')
+  const over = specs.find((s) => s.guard === 'i <= n')
+  assert.ok(safe && over, 'the `< n` and `<= n` loops are both recognized')
+  // safe: the auto-invariant 0<=i<=n discharges OFFLINE (no LLM) — iterator bound-safe.
+  assert.equal((await proveLoop(safe)).proved, true, 'bound-safety PROVED for the step-1 `<` loop')
+  // overshoot: i reaches n+1; the bound invariant is not inductive → z3 refutes it.
+  const r = await proveLoop(over)
+  assert.equal(r.proved, false, 'the off-by-one `<= n` loop is flagged — bound-safety does not hold')
+  assert.ok(r.vcs.find((v) => v.kind === 'step' && !v.discharged && v.counterexample), 'z3 returns the overshoot counterexample on the inductive step')
 })
 
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {

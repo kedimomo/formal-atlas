@@ -25,7 +25,7 @@ Usage:
   formal-atlas explain <path> [--rule=R] [--subject=S]   (derivation/proof tree per violation)
   formal-atlas repair  <path> [--online] [--apply]       (★3 closed loop: LLM patch → re-verify)
   formal-atlas smt     refinement|contract|policy|dafny|faithfulness <spec.json>
-  formal-atlas prove   <loop-spec.json>  (★8: with an invariant → VCgen+built-in Z3 discharges it; without → synthesize one (LLM proposes, z3 disposes))
+  formal-atlas prove   <loop-spec.json | file.js | dir>  (★8: discharge/synthesize a loop invariant, or lift counting loops from code and prove iterator bound-safety)
   formal-atlas watch   <path>            (monitor changes, auto-verify)
 
 Examples:

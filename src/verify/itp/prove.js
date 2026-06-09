@@ -53,21 +53,26 @@ export function formatProof(res) {
 }
 
 /**
- * CLI entry: read a loop-spec JSON (a single spec, an array, or `{loops:[...]}`),
- * discharge each, print, and return a process exit code (0 = all proved). A
- * raw project path is rejected with guidance — lifting invariants from code
- * (LLM autoformalization, docs/13 §五·二) is not wired yet, and we never pretend.
+ * CLI entry: route a target to the right prover.
+ *   <spec>.json          → discharge (with `invariant`) or synthesize (without) each spec
+ *   <file>.js / <dir>/   → lift counting loops from code and prove iterator bound-safety
+ * Returns a process exit code (0 = everything proved / nothing to prove).
  */
 export async function runProveFile(target) {
-  let isFile = false
-  try { isFile = fs.statSync(target).isFile() } catch { /* missing path */ }
-  if (!isFile || !target.endsWith('.json')) {
-    console.error('# prove expects a loop Hoare-spec JSON: { vars, pre, guard, invariant, body:[{var,expr}], post }.')
-    console.error('# With an `invariant`: B-tier VCgen + built-in Z3 discharges it (docs/13 §五·一), WITHOUT Dafny/Lean.')
-    console.error('# WITHOUT an `invariant`: synthesize one (LLM proposes, z3 disposes — §五·二; offline ⇒ needs-llm).')
-    console.log('example: formal-atlas prove examples/itp/sum-bound.loop.json')
-    return 2
-  }
+  let stat = null
+  try { stat = fs.statSync(target) } catch { /* missing path */ }
+  if (stat && stat.isFile() && target.endsWith('.json')) return runProveSpecFile(target)
+  if (stat && (stat.isDirectory() || /\.(js|mjs|cjs)$/.test(target))) return runProveCode(target)
+  console.error('# prove takes a loop-spec JSON, or a .js file / directory to lift counting loops from.')
+  console.error('# spec JSON: { vars, pre, guard, invariant, body:[{var,expr}], post } — with `invariant`')
+  console.error('#   ⇒ z3 discharges it (docs/13 §五·一); without ⇒ synthesize one (§五·二; offline needs-llm).')
+  console.error('# .js/dir: extract ascending counting loops and prove the iterator never overshoots its bound.')
+  console.log('example: formal-atlas prove examples/itp/sum-bound.loop.json  |  formal-atlas prove examples/itp/loops.js')
+  return 2
+}
+
+/** Discharge/synthesize the loop spec(s) in a JSON file. */
+async function runProveSpecFile(target) {
   const parsed = JSON.parse(fs.readFileSync(target, 'utf8'))
   const specs = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.loops) ? parsed.loops : [parsed])
   let synth = null
@@ -85,6 +90,36 @@ export async function runProveFile(target) {
       allProved = allProved && res.proved
       console.log(formatProof(res))
     }
+  }
+  return allProved ? 0 : 1
+}
+
+/**
+ * Lift counting loops from real code (a .js file or a directory) and prove each
+ * one's iterator bound-safety with the built-in z3 (docs/13 §五·二, front half).
+ * The extractor is conservative — loops it cannot model precisely are SKIPPED,
+ * never guessed — so a `proved` here is a genuine machine-checked safety result
+ * and a `NOT proved` is a real overshoot (off-by-one / stride-skips-bound).
+ */
+async function runProveCode(target) {
+  const { walkFiles } = await import('../../pipeline.js')
+  const { extractLoopSpecs } = await import('../../extract/loop/counter.js')
+  const specs = []
+  for (const { abs, fileId } of walkFiles(target).filter((f) => /\.(js|mjs|cjs)$/.test(f.ext))) {
+    let code
+    try { code = fs.readFileSync(abs, 'utf8') } catch { continue }
+    for (const s of extractLoopSpecs(fileId, code)) specs.push(s)
+  }
+  if (!specs.length) {
+    console.error(`# prove ${target}: no soundly-modelable counting loops found (only simple ascending for-loops are lifted; anything else is skipped, not guessed).`)
+    return 0
+  }
+  console.error(`# prove ${target}: ${specs.length} counting loop(s) lifted — checking iterator bound-safety with z3`)
+  let allProved = true
+  for (const s of specs) {
+    const res = await proveLoop(s)
+    allProved = allProved && res.proved
+    console.log(formatProof(res))
   }
   return allProved ? 0 : 1
 }

@@ -2,6 +2,16 @@
 
 > 本次会话存档点（2026-06-09，**框架模型 刀1 + ITP 自建-tier spec + 三阶段 plan**）。承上批（★6 刀8/9、★7 实参流/builtin/字段敏感、★5 DRed、全部已合并 push）。本批：**① 实现"阶段一"框架模型感知 刀1**（`src/models/{index,fastify}.js`,`--framework`：`app.METHOD(path[,opts],handler)` → `http_route` → `calls3(scope→handler)`+`entry`+`http_entry`；实测 routes **271 HTTP 入口、reaches +3086 边**——本库高杠杆论点证实；parity-safe 默认 routes 187/sample 7/taint 1 位等价）；**② 回答"阶段二必须用 Dafny/Lean 吗"=否**（`docs/13 §五·一` 三档:A 内置 z3 / **B 自建 VCgen+内置 z3 零外部** / C 顶档才需外部内核——"数学自建框架"在 B 档成立）；**③ 三阶段具体计划已存**（`docs/15` 框架模型 + `docs/13` ITP + `docs/14` IFDS,含刀法/文件布局/执行序）。engines 39。本文件 + 自动记忆（`formal-atlas-subsystem.md`）共同记录"我停在哪、下一步做什么"。
 
+## ⏯️ 下个会话从这里开始（NEXT SESSION — START HERE）
+1. **进入仓库**：`cd U:/trae/todo_list/formal-atlas`（在 `main` 分支，与 `origin/main` 同步，工作树干净）。
+2. **验证存档可跑**：`npm test` → 应 **9 smoke + 39 engines + MCP 16-工具自检 全绿**。
+3. **进度**：★1–★7（精化/闭环/忠实度/规模/过程间污点/指向）+ **框架模型刀1** 全部在 `main`、已 push。三阶段计划见 `docs/15`（框架模型）/`docs/13`（ITP）/`docs/14`（IFDS）。
+4. **下一步（二选一，推荐①）**：
+   - **① 框架模型 刀2**（最连贯）：钩子链 `opts.preHandler`/`onRequest` + 全局 `addHook` → `calls3(handler→hook)`，并把 handler 第0参 `req` 标成入口污点 `source` → 直接服务"未认证请求能否到 DB 写/汇"安全查询。改 `src/extract/js-ast.js`（http_route 已发,补 hook 字段）+ `src/models/fastify.js`。见 `docs/15 §五·刀2`。
+   - **② ITP 刀1**（零外部）：新建 `src/verify/itp/vcgen.js` 自建 VCgen + 内置 z3，把带不变式的循环类 `unchecked` 真证掉（**不需 Dafny/Lean**，见 `docs/13 §五·一` B 档）。
+5. **怎么让我继续**：新会话里说「继续推进 formal-atlas，按 `formal-atlas/RESUME.md` 下一步」，或直接「实现框架模型刀2」。我会先 `npm test` 确认存档、再开工。纪律：每刀 **夹具 + parity（flag 关位等价）+ 真实库实测 + commit**。
+> 旁注：`.trae/` 下 micro-forge 草稿是**无关**未跟踪文件，历次 commit 一律排除，勿混入。
+
 ## 当前所在分支
 **`main`**（★1–★7 全部工作已 **fast-forward 合并进 main 并 push 到 origin**，2026-06-08）。`star2-refinement-types` 与 main 同点、也已 push。`main` 与 `origin/main` 同步（0 偏离）。后续工作可直接在 main 或新开分支。
 

@@ -1,0 +1,8 @@
+{
+  "kind": "termination",
+  "name": "count-up",
+  "vars": { "i": "int", "n": "int" },
+  "guard": "i < n",
+  "body": [{ "var": "i", "expr": "(i + 1)" }],
+  "measure": "(n - i)"
+}

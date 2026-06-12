@@ -84,6 +84,12 @@ async function runProveSpecFile(target) {
       const res = await ind.proveByInduction(s)
       allProved = allProved && res.proved
       console.log(ind.formatInduction(res))
+    } else if (s && s.kind === 'termination') {
+      // C-tier: loop termination by a ranking function (z3 discharges bound + strict-decrease).
+      const term = await import('./termination.js')
+      const res = await term.proveTermination(s)
+      allProved = allProved && res.terminates
+      console.log(term.formatTermination(res))
     } else if (s && s.invariant === undefined) {
       // No invariant supplied ⇒ synthesize one (LLM proposes, z3 disposes — §五·二).
       // Dynamic import keeps synth.js → prove.js a one-way edge (no static cycle).

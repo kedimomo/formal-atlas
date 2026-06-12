@@ -661,6 +661,26 @@ test('★8 ITP C-tier self-built induction kernel: ∀n.P(f(n)) discharged by z3
   assert.equal(ni.step.ok, false, 'step P(n) ⇒ P(n+1) refuted by z3 — no false ∀ escapes')
 })
 
+test('★8 ITP C-tier termination (ranking function): measure ≥0 + strictly-decreasing proves termination; wrong measure / infinite loop rejected', async () => {
+  const { proveTermination } = await import('../src/verify/itp/termination.js')
+  const countUp = { vars: { i: 'int', n: 'int' }, guard: 'i < n', body: [{ var: 'i', expr: '(i + 1)' }] }
+
+  // TERMINATES — (n - i) is >= 0 under i<n and drops by 1 each iteration (well-founded descent).
+  const ok = await proveTermination({ ...countUp, name: 'count-up', measure: '(n - i)' })
+  assert.equal(ok.terminates, true, 'count-up terminates via ranking function n - i')
+  assert.ok(ok.bound.ok && ok.decreasing.ok && !ok.vacuous, 'both bound and strict-decrease discharged by z3')
+
+  // WRONG MEASURE — (n + i) does not decrease; the kernel must REJECT (no termination without descent).
+  const wrong = await proveTermination({ ...countUp, name: 'count-up-bad', measure: '(n + i)' })
+  assert.equal(wrong.terminates, false, 'a non-decreasing measure is rejected')
+  assert.equal(wrong.decreasing.ok, false, 'z3 refutes the strict-decrease lemma for n + i')
+
+  // INFINITE LOOP — i := i+1 under i>=0 never stops; no measure we give can decrease, so it is REJECTED.
+  const inf = await proveTermination({ vars: { i: 'int' }, guard: 'i >= 0', body: [{ var: 'i', expr: '(i + 1)' }], name: 'forever', measure: 'i' })
+  assert.equal(inf.terminates, false, 'an infinite loop cannot be proved terminating')
+  assert.equal(inf.decreasing.ok, false, 'i increases → strict-decrease refuted by z3 (no false termination)')
+})
+
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {
   // A graph WITH a cycle (a→b→c→a) plus c→d and x→a — stresses ancestors×descendants.
   const edges = [['a', 'b'], ['b', 'c'], ['c', 'a'], ['c', 'd'], ['x', 'a']]

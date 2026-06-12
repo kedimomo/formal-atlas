@@ -78,7 +78,7 @@
 
 **soundness / 误证 0**:假定理只能源于 z3(A/B 档已信任)或这几十行(小到可通读)。`test/engines.test.js` **对抗性测试**:① true `sum(n)>=n` → proved;② false-base `sum(n)>n`(n=0 时 0>0 假)→ z3 驳 base、**拒绝**(给反例);③ 非归纳 `sum(n)<=n`(base 成立但 step 破)→ z3 驳 step、**拒绝**——内核**绝不**在缺任一引理时断言 ∀。engines **48→49**(9 smoke 全保)。
 
-**parity 纯增量**:新文件 `induction.js` + CLI `runProveSpecFile` 加 `kind:"induction"` 分支(在 invariant 分支前),不动既有 spec/code 模式(`verify sample-project` 仍 7、loop/OOB/合成裁决逐位一致)。**MCP `prove` 工具暂未接**(避免与 `mcp/tools.js` 上无关未提交 WIP 纠缠)——CLI 已足够演示,MCP 接入留作后续。**余(C 档续刀,可选,仍零外部)**:列表/树结构归纳、强归纳、互递归、终止性度量(`measure`)——同一 LCF 内核加更多可信规则即可。
+**parity 纯增量**:新文件 `induction.js` + CLI `runProveSpecFile` 加 `kind:"induction"` 分支(在 invariant 分支前),不动既有 spec/code 模式(`verify sample-project` 仍 7、loop/OOB/合成裁决逐位一致)。**MCP `prove` 工具暂未接**(避免与 `mcp/tools.js` 上无关未提交 WIP 纠缠)——CLI 已足够演示,MCP 接入留作后续。**✅ 终止性(ranking function)已落地(2026-06-12，C 档 刀2，零外部)**:`src/verify/itp/termination.js` `proveTermination`——全功能正确性 = 部分正确 + **终止**,而终止是 z3 单独判不了的(它是"无限运行不存在"的论断)。可信规则 = **良基递降**:给一个排序函数 `measure`,z3 放电两条引理——**bound** `G ⇒ measure≥0`、**decrease** `G ∧ x'=body(x) ⇒ measure(x')<measure(x)`(next-state 建模成新鲜变量 + 转移约束,**无新 z3 代码**,同归纳刀);两者都过即证终止(ℕ 良基:非负整数不能无限严格递减)。CLI `prove`(`kind:"termination"`)+ 夹具 `examples/itp/termination.json`(count-up `i<n` 配 `measure=(n-i)` → **TERMINATES**)+ **对抗性测试**(非递减 `n+i`、以及无限循环 `i:=i+1` under `i≥0` 都因 decrease 引理被 z3 驳而**拒绝**——绝不假证终止,engines 49→50)。**余(C 档续刀,可选,仍零外部)**:列表/树结构归纳、强归纳、互递归——同一 LCF 内核加更多可信规则即可。
 
 ## 六、范围与非目标
 - **是**：把已诚实标 `unchecked` 的义务真正放电；可判定档继续走 z3（不退化）；flag-gated、parity。

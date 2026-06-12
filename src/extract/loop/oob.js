@@ -25,7 +25,7 @@
  * must NOT report OOB. Proving an access SAFE is always sound (ignored escapes only
  * remove hypotheses); only the flag direction needs the `fullyModeled` gate.
  */
-import { parse, parseLoop } from './header.js'
+import { parse, parseLoop, baseKey } from './header.js'
 
 const SKIP_KEYS = new Set(['type', 'loc', 'start', 'end', 'range'])
 const FN_TYPES = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'])
@@ -82,13 +82,19 @@ function collectAccesses(node, counter, vars, conds, dropped, out) {
     collectAccesses(node.right, counter, vars, guard != null ? [...conds, guard] : conds, drop, out)
     return
   }
-  // arr[idx] read — record iff index is decidable AND mentions the counter.
-  if (node.type === 'MemberExpression' && node.computed && node.object?.type === 'Identifier') {
-    const idx = exprToDsl(node.property, { ...vars }) // probe without polluting vars yet
-    if (idx != null && new RegExp(`\\b${counter}\\b`).test(idx)) {
-      exprToDsl(node.property, vars) // commit the index's vars
-      const arrLen = `${node.object.name}_length`; vars[arrLen] = 'int'
-      out.push({ arr: node.object.name, idxDsl: idx, arrLen, conds: [...conds], dropped, loc: node.loc?.start?.line ?? 0 })
+  // arr[idx] / this.x[idx] read — record iff the base normalizes (an identifier or a
+  // non-computed member chain like `this.tree`), the index is decidable, AND it mentions
+  // the counter. baseKey() keys the access the same way header.js keyed the bound's base,
+  // so `a.arr === bound.base` lines up (an identifier base reduces to the prior behavior).
+  if (node.type === 'MemberExpression' && node.computed) {
+    const arrK = baseKey(node.object)
+    if (arrK != null) {
+      const idx = exprToDsl(node.property, { ...vars }) // probe without polluting vars yet
+      if (idx != null && new RegExp(`\\b${counter}\\b`).test(idx)) {
+        exprToDsl(node.property, vars) // commit the index's vars
+        const arrLen = `${arrK}_length`; vars[arrLen] = 'int'
+        out.push({ arr: arrK, idxDsl: idx, arrLen, conds: [...conds], dropped, loc: node.loc?.start?.line ?? 0 })
+      }
     }
   }
   for (const k of Object.keys(node)) {

@@ -55,13 +55,33 @@ function parseInit(init) {
   return null
 }
 
-/** A literal / bare identifier / non-computed `obj.prop` → base bound term, else null. */
+/**
+ * Normalize an array-base expression — a bare `Identifier`, `this`, or a non-computed
+ * member chain (`this.tree`, `a.b.c`) — into a stable string key (`arr`, `this_tree`,
+ * `a_b_c`), or null for anything else (computed member, call, literal). Exported so the
+ * per-access OOB collector (oob.js) keys an access `base[i]` the SAME way a bound's base
+ * is keyed, letting the two line up (`a.arr === bound.base`, shared `${key}_length` var).
+ * For a plain `Identifier` this is just the name → identifier and `arr.length` bounds
+ * behave EXACTLY as before; only member-of-member bases (`this.tree.length`) are new.
+ */
+export function baseKey(node) {
+  if (node?.type === 'ThisExpression') return 'this'
+  if (node?.type === 'Identifier') return node.name
+  if (node?.type === 'MemberExpression' && !node.computed && node.property?.type === 'Identifier') {
+    const o = baseKey(node.object); return o == null ? null : `${o}_${node.property.name}`
+  }
+  return null
+}
+
+/** A literal / bare identifier / non-computed member `<chain>.prop` → base bound term, else null. */
 function baseBoundTerm(node) {
   if (node?.type === 'Literal' && Number.isInteger(node.value)) return { expr: String(node.value), varName: null, name: null, base: null }
   if (node?.type === 'Identifier') return { expr: node.name, varName: node.name, name: node.name, base: null }
-  if (node?.type === 'MemberExpression' && !node.computed && node.object?.type === 'Identifier' && node.property?.type === 'Identifier') {
-    const v = `${node.object.name}_${node.property.name}`
-    return { expr: v, varName: v, name: null, base: node.object.name }
+  if (node?.type === 'MemberExpression' && !node.computed && node.property?.type === 'Identifier') {
+    const bk = baseKey(node.object) // arr / this.tree / a.b  →  arr / this_tree / a_b
+    if (bk == null) return null
+    const v = `${bk}_${node.property.name}` // arr_length / this_tree_length
+    return { expr: v, varName: v, name: null, base: bk }
   }
   return null
 }
@@ -129,10 +149,13 @@ function bodySafe(body, counter, boundName, boundBase) {
     if (node.type === 'AssignmentExpression' && node.left?.type === 'Identifier' && (node.left.name === counter || node.left.name === boundName || node.left.name === boundBase)) { safe = false; return }
     if (node.type === 'UpdateExpression' && node.argument?.type === 'Identifier' && (node.argument.name === counter || node.argument.name === boundName || node.argument.name === boundBase)) { safe = false; return }
     if (boundBase) {
-      // base.x = … / base[x] = … (member/element write), or base.method(…) — any of
-      // these could change base's length, so the bound is not loop-invariant → skip.
-      if (node.type === 'AssignmentExpression' && node.left?.type === 'MemberExpression' && node.left.object?.type === 'Identifier' && node.left.object.name === boundBase) { safe = false; return }
-      if (node.type === 'CallExpression' && node.callee?.type === 'MemberExpression' && node.callee.object?.type === 'Identifier' && node.callee.object.name === boundBase) { safe = false; return }
+      // The bound rests on `boundBase`'s length; any mutation of that base array makes it
+      // non-loop-invariant → skip. Covers an identifier base (`arr`) AND a member chain
+      // (`this.tree`): a member/element write `base.x=`/`base[x]=`, a method call `base.f()`,
+      // or a reassignment of the chain itself (`this.tree = …`). baseKey() keys each the same
+      // way the bound's base was keyed (an identifier base reduces to the prior behavior).
+      if (node.type === 'AssignmentExpression' && node.left?.type === 'MemberExpression' && (baseKey(node.left.object) === boundBase || baseKey(node.left) === boundBase)) { safe = false; return }
+      if (node.type === 'CallExpression' && node.callee?.type === 'MemberExpression' && baseKey(node.callee.object) === boundBase) { safe = false; return }
     }
     const next = inFn + (FN_TYPES.has(node.type) ? 1 : 0)
     for (const k of Object.keys(node)) {

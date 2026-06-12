@@ -600,6 +600,41 @@ test('★8 affine bounds + escape tolerance: arr.length-1 proves arr[i+1]; escap
   assert.equal(escapeOnly.fullyModeled, false, 'an escape-loop access is prove-only → not-analyzed, never a false positive')
 })
 
+test('★8 member-of-member bounds: this.X.length-1 proves this.X[i]/[i+1]; plain-bound overshoot flagged; base-mutating loop skipped', async () => {
+  const { extractAccessObligations } = await import('../src/extract/loop/oob.js')
+  const code = fs.readFileSync(root('examples/itp/member-bound.js'), 'utf8')
+  const verdict = (o) => checkContract({ vars: o.vars, pre: o.pre, post: o.post })
+
+  // The bound/access base is the member chain `this.rows` — normalized to the stable key
+  // `this_rows`, so the affine bound and its accesses line up exactly as a bare identifier
+  // would (the merkle-tree.js getProof shape). pairs()/shiftBad() lift; grow() is skipped.
+  const specs = extractLoopSpecs('member-bound.js', code)
+  const affineSpec = specs.find((s) => s.guard === 'i < this_rows_length - 1')
+  assert.ok(affineSpec, 'the member-of-member affine bound `this.rows.length - 1` normalizes into an iterator-bound spec')
+  assert.equal((await proveLoop(affineSpec)).proved, true, 'the iterator stays within this.rows.length - 1')
+
+  const obs = extractAccessObligations('member-bound.js', code)
+  assert.ok(obs.length >= 3, 'this.rows[i] + this.rows[i+1] (pairs) and this.rows[i+1] (shiftBad) collected; grow() yields none (skipped)')
+  assert.ok(obs.every((o) => o.arr === 'this_rows'), 'every member-of-member access is keyed to the stable base `this_rows`')
+
+  // this.rows[Number(i)] (pairs) — Number() modeled as identity on the counter; proved in bounds.
+  const idxI = obs.filter((o) => o.idxDsl === 'i')
+  assert.ok(idxI.length >= 1, 'this.rows[Number(i)] is collected (Number() is the identity on the integer counter)')
+  for (const o of idxI) assert.equal((await verdict(o)).entailed, true, `${o.name} (this.rows[i]) proved in bounds`)
+
+  // this.rows[i+1] appears twice: pairs (affine `length-1` → safe) and shiftBad (plain
+  // `length` → real overshoot). Both are fully-modeled (neither loop escapes), so they are
+  // told apart by the PROOF itself — the affine one entails, the plain one is flagged + witness.
+  const next = obs.filter((o) => o.idxDsl === '(i + 1)')
+  assert.equal(next.length, 2, 'both this.rows[i+1] reads collected (affine-safe + plain-bound overshoot)')
+  const verdicts = await Promise.all(next.map(async (o) => ({ o, r: await verdict(o) })))
+  const safe = verdicts.find((v) => v.r.entailed)
+  const oob = verdicts.find((v) => !v.r.entailed)
+  assert.ok(safe, 'this.rows[i+1] proved safe directly by the affine this.rows.length - 1 bound')
+  assert.ok(oob && oob.o.fullyModeled, 'this.rows[i+1] under the plain this.rows.length bound is a fully-modeled possible-OOB (real finding, flagged — not a false positive)')
+  assert.ok(oob.r.counterexample, 'z3 returns the OOB witness (i = this.rows.length - 1) for the plain-bound overshoot')
+})
+
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {
   // A graph WITH a cycle (a→b→c→a) plus c→d and x→a — stresses ancestors×descendants.
   const edges = [['a', 'b'], ['b', 'c'], ['c', 'a'], ['c', 'd'], ['x', 'a']]

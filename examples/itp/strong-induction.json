@@ -1,0 +1,10 @@
+{
+  "kind": "strong-induction",
+  "name": "fib-nonneg",
+  "n": "n",
+  "fn": "f",
+  "depth": 2,
+  "bases": ["0", "1"],
+  "step": "(f_1 + f_2)",
+  "property": "f >= 0"
+}

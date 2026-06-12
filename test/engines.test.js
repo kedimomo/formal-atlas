@@ -661,6 +661,23 @@ test('★8 ITP C-tier self-built induction kernel: ∀n.P(f(n)) discharged by z3
   assert.equal(ni.step.ok, false, 'step P(n) ⇒ P(n+1) refuted by z3 — no false ∀ escapes')
 })
 
+test('★8 ITP C-tier strong induction (depth-d recurrence, e.g. Fibonacci): IH at the d used points + d base cases, all z3-discharged; false claim rejected', async () => {
+  const { proveByStrongInduction } = await import('../src/verify/itp/strong-induction.js')
+  // fib(0)=0, fib(1)=1, fib(n)=fib(n-1)+fib(n-2) — needs P(n-1) AND P(n-2), so weak induction can't.
+  const fib = { name: 'fib', n: 'n', fn: 'f', depth: 2, bases: ['0', '1'], step: '(f_1 + f_2)' }
+
+  // TRUE — ∀n≥0. fib(n) >= 0 by strong induction: bases 0>=0, 1>=0; step f_1>=0 ∧ f_2>=0 ⇒ f_1+f_2>=0.
+  const ok = await proveByStrongInduction({ ...fib, property: 'f >= 0' })
+  assert.equal(ok.proved, true, 'fib(n) >= 0 proved by depth-2 strong induction')
+  assert.ok(ok.bases.every((b) => b.ok) && ok.step.ok && !ok.vacuous, 'both base cases and the step discharged by z3')
+  assert.equal(ok.bases.length, 2, 'depth-2 ⇒ exactly two base cases (n=0, n=1)')
+
+  // FALSE — ∀n≥0. fib(n) >= n is false (fib(2)=1 < 2). The step is not entailed → REJECTED with a witness.
+  const bad = await proveByStrongInduction({ ...fib, property: 'f >= n' })
+  assert.equal(bad.proved, false, 'fib(n) >= n is NOT proved')
+  assert.equal(bad.step.ok, false, 'z3 refutes the strong-induction step — no false ∀ escapes')
+})
+
 test('★8 ITP C-tier termination (ranking function): measure ≥0 + strictly-decreasing proves termination; wrong measure / infinite loop rejected', async () => {
   const { proveTermination } = await import('../src/verify/itp/termination.js')
   const countUp = { vars: { i: 'int', n: 'int' }, guard: 'i < n', body: [{ var: 'i', expr: '(i + 1)' }] }

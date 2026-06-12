@@ -90,6 +90,12 @@ async function runProveSpecFile(target) {
       const res = await term.proveTermination(s)
       allProved = allProved && res.terminates
       console.log(term.formatTermination(res))
+    } else if (s && s.kind === 'strong-induction') {
+      // C-tier: ∀n.P(f(n)) by strong/complete induction (depth-d recurrence, e.g. fibonacci).
+      const si = await import('./strong-induction.js')
+      const res = await si.proveByStrongInduction(s)
+      allProved = allProved && res.proved
+      console.log(si.formatStrongInduction(res))
     } else if (s && s.invariant === undefined) {
       // No invariant supplied ⇒ synthesize one (LLM proposes, z3 disposes — §五·二).
       // Dynamic import keeps synth.js → prove.js a one-way edge (no static cycle).

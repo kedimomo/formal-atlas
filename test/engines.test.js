@@ -635,6 +635,32 @@ test('★8 member-of-member bounds: this.X.length-1 proves this.X[i]/[i+1]; plai
   assert.ok(oob.r.counterexample, 'z3 returns the OOB witness (i = this.rows.length - 1) for the plain-bound overshoot')
 })
 
+test('★8 ITP C-tier self-built induction kernel: ∀n.P(f(n)) discharged by z3 base+step (no external prover); false/non-inductive claims rejected', async () => {
+  const { proveByInduction } = await import('../src/verify/itp/induction.js')
+  // sum(0)=0, sum(n+1)=sum(n)+(n+1) — a recursive function z3 treats as uninterpreted.
+  const sum = { name: 'sum', n: 'n', fn: 's', f0: '0', step: '(s + (n + 1))' }
+
+  // TRUE — ∀n≥0. sum(n) >= n, provable ONLY by induction (z3 alone can't reason about the
+  // recursive sum). base 0>=0 ✓; step: s>=n ∧ n>=0 ⊢ s+(n+1) >= n+1 (i.e. s>=0) ✓.
+  const ok = await proveByInduction({ ...sum, property: 's >= n' })
+  assert.equal(ok.proved, true, 'sum(n) >= n proved by the induction rule')
+  assert.ok(ok.base.ok && ok.step.ok && !ok.vacuous, 'both base and step discharged by z3, non-vacuous')
+
+  // FALSE at the base — sum(n) > n is false at n=0 (sum(0)=0). The kernel must REJECT it
+  // (it never asserts ∀ without z3 proving P(0)); z3 returns the base counterexample.
+  const fb = await proveByInduction({ ...sum, property: 's > n' })
+  assert.equal(fb.proved, false, 'sum(n) > n is NOT proved (base fails)')
+  assert.equal(fb.base.ok, false, 'base P(0): 0 > 0 refuted by z3')
+  assert.ok(fb.base.counterexample, 'z3 gives the base counterexample')
+
+  // NON-INDUCTIVE — sum(n) <= n holds at 0 but the inductive step breaks (sum grows faster).
+  // base ✓ but step ✗ → REJECTED: the kernel only certifies ∀ when BOTH lemmas hold.
+  const ni = await proveByInduction({ ...sum, property: 's <= n' })
+  assert.equal(ni.proved, false, 'sum(n) <= n is NOT proved (step fails)')
+  assert.equal(ni.base.ok, true, 'base 0 <= 0 holds')
+  assert.equal(ni.step.ok, false, 'step P(n) ⇒ P(n+1) refuted by z3 — no false ∀ escapes')
+})
+
 test('★5 incremental closure (ReBAC ClosureService port): add-edge maintenance == full recompute', () => {
   // A graph WITH a cycle (a→b→c→a) plus c→d and x→a — stresses ancestors×descendants.
   const edges = [['a', 'b'], ['b', 'c'], ['c', 'a'], ['c', 'd'], ['x', 'a']]

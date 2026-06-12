@@ -22,19 +22,19 @@
 5. **CLI `prove <path>` + MCP `prove` 工具**，默认关、opt-in、parity-safe。
 
 ## 五·一、必须引入 Dafny/Lean 吗？——不必。"数学自己建框架"的三档
-**结论:中间一大档可以零外部、用已内置的 z3 自建,Dafny/Lean 只在最顶档才需要。**
+**结论（2026-06-12 修订）:A/B/C 三档均可零外部自建——A/B 用已内置 z3,C 用一条自建的可信归纳规则(LCF 思路)再交 z3 放电每例。外部 Dafny/Lean 退化为"想要第三方背书"的可选项,而非必需。**
 
 | 档 | 性质范围 | 怎么证 | 要外部吗 |
 |---|---|---|---|
 | **A 可判定** | QF-LIA、数组、位向量、无量词 | **已内置 z3**（★2/契约,现成） | ❌ 零外部 |
 | **B 自建 VCgen + z3**（**本就该先做这档**） | **带不变式的循环、有界量词、简单堆** | **自己写验证条件生成器**,把"循环不变式""前后置"编码成 z3 查询——**这正是 Dafny 内部干的事（Dafny = VCgen + z3）**。z3 本身支持量词实例化,所以自建 VCgen 能覆盖远超直线 QF-LIA | ❌ **零外部**(复用已装 z3) |
-| **C 顶档** | 无界归纳、高阶逻辑、完整函数正确性、终止性证明 | 需**可信内核**（Lean/Coq/Isabelle）或 Dafny/Verus | ✅ 外部 |
+| **C 顶档** | 无界归纳、高阶逻辑、完整函数正确性、终止性证明 | **自建小型 LCF 内核**:一条可信归纳规则 `[P(0)]∧[∀n.P(n)⇒P(n+1)]⟹∀n.P(n)`,base/step 仍交 z3 放电（§五·三 ✅ 已落地） | ❌ **零外部**（外部 ITP 仅可选背书） |
 
 **B 档怎么自建（无 Dafny）**:对一个带不变式 `I` 的循环,发**三条 z3 查询**——① `I` 入口成立;② `I ∧ guard ⇒ I'`（体执行后保持,归纳步）;③ `I ∧ ¬guard ⇒ post`。z3 逐条放电。**这就是"用数学自己建框架":VCgen 是纯逻辑构造,z3 已在手,不引 Dafny。** `itp/vcgen.js` 先做这档(把 `★8 unchecked` 里能 invariant 化的提上来),`toDafny` 的逻辑大半可复用成"toZ3-VC"。
 
-**为什么顶档 C 仍劝用外部、不自建内核**:不是"建不出",是**信任本身就是产品**。证明器的**内核**（De Bruijn 判准:小到可独立复核、被数学界审过）是它的皇冠;**自己写内核,一旦有 bug 就"证出"假定理——比不证更糟（假信心）**。Lean/Coq 内核花了数十年挣得信任。所以顶档**借**外部内核;自建只到 B 档（VCgen+z3,z3 的内核已被信任）。
+**为什么 C 档也能零外部自建（2026-06-12 修订前述结论）**:此前认为 C 档"必须借外部内核",是**误读了 De Bruijn 判准**。该判准的本质是"内核**小到可独立复核**",不是"内核必须是 Lean/Coq"。正确的自研路线是 **LCF 架构**——一个极小的**可信内核**:定理(`Thm`)只能由原始推理规则构造、不可伪造;上层自动化全部不可信、必须过内核。对本项目,z3 唯一够不着的是**归纳**,于是 C 档 = **一条自建的可信归纳规则**,而 base/step 两个**可判定**义务仍交**已被信任的 z3** 放电——内核只做"合成",**绝不自行断言 ∀**。所以假定理只能源于 z3(A/B 档已信任)或这几十行规则(小到可在 `src/verify/itp/induction.js` 通读,且**对抗性测试**:base-假、非归纳两种伪命题都被拒)。**信任仍是产品,但"小而可审"自己即可保证;只有发表深层数学、需要"被数学界审过"的第三方背书时才借 Lean/Coq**——对代码验证,自建小内核足矣,且守住零安装。已落地见 §五·三。
 
-**修订后的 stage-2 刀法**:**刀1 = B 档自建 VCgen + 内置 z3（零外部,先做,覆盖循环不变式/有界量词）**；刀2（可选）= C 档接外部 ITP，只补 z3 真够不着的顶档。这样**零安装坚持得更久**,且直接落实"数学自建框架"。
+**修订后的 stage-2 刀法**:**刀1 = B 档自建 VCgen + 内置 z3（零外部,✅ 已落地,覆盖循环不变式/有界量词/per-access OOB/仿射界/成员界）**；**刀2 = C 档自建归纳内核（零外部,✅ 已落地 §五·三,LCF 思路 + z3 放电 base/step）**；外部 ITP 仅"想要第三方背书"时可选。**全程零安装**,直接落实"数学自建框架"。
 
 **✅ 刀1 已落地（2026-06-09，B 档 自建 VCgen + 内置 z3，零外部）**:`src/verify/itp/vcgen.js`（`loopVCs(spec)` **纯逻辑**构造三 VC，无求解器——"框架自建"那一半；`toDafnyLoop` 把同一 spec 出 Dafny 骨架，为 C 档备好 VC-gen 输入）+ `src/verify/itp/prove.js`（`proveLoop` 放电 + `runProveFile` CLI 薄入口）。**关键复用:每条 VC = 一次 UNSAT 检查**,正是 `checkContract` 的形状——① `pre ⇒ inv`、③ `inv ∧ ¬guard ⇒ post` 直接复用 `checkContract`;② 归纳步 `inv ∧ guard ∧ x'=body(x) ⇒ inv'` 用 smt-bridge 新增的 **`checkInductive`**（带撇号 `'` 的原状态变量编码转移关系 + frame;`'` 在 DSL 标识符 `[A-Za-z_]\w*` 里非法,故 next-state 常量绝不与用户变量撞名）。`proved` 当且仅当三 VC 全 entailed 且无 vacuous（前件 UNSAT 按精化层同例判 ❌,不充假证）。CLI `prove <loop-spec.json>`（薄委派给 `runProveFile`,raw 项目路径**诚实拒绝**——从代码 lift 不变式见 §五·二,未接,绝不假装）。夹具 `examples/itp/`:`sum-bound.loop.json`（耦合不变式 `sum==i` **真证功能后置** `sum==n`,三 VC 全过→PROVED）、`noninductive.loop.json`（`sum<=i` 入口成立但体内 `sum+=2,i+=1` 不保持→**step VC 被 z3 反例 `i=0,sum=0` 驳回**,generate-and-check 拒绝假证）。2 测试（engines **40→42** 全绿）。**parity = 纯增量**:新命令分支 + 新 `itp/` 子目录 + 一个 smt-bridge 新 export,**不改任何既有路径**→ `verify examples/sample-project` 仍 7、`refine` 仍标 `getCount: unchecked`、40 既有测试全保。**直接闭合 `refine` 诚实标的 `unchecked`（"post 无 pre→需 body-level VC, ★8"）缺口**:循环体 + 不变式正是那条 body-level VC,z3 把它从假设升为机器证明。`src/verify/` 仍 8 文件（`itp/`/`pointsto/` 为子目录,不计入),`cli.js` 委派化只 +7 行。**余**:① **✅ MCP `prove` 工具已落地（2026-06-09）**——第 17 工具,`invariant` 给定走 `proveLoop` 放电、缺省走 `synthesizeInvariant`（**经 MCP sampling 让 IDE 自己的 LLM 提议不变式 → z3 验**,§五·二闭环经 MCP 跑通）;`test-mcp.js` 自检扮演 IDE LLM 回 sampling、断言 proved（端到端）。提交时用 `git stash` 隔离 `mcp/tools.js` 上无关未提交改动,故 commit 干净（WIP 已 pop 回工作树,仍未提交）;② C 档 刀2（外部 ITP,仅顶档无界归纳/全功能正确性）按需;③ **从 raw 源 sound 抽取 loop 骨架**（vars/pre/guard/body/post）使 `prove`/合成作用于真实代码——soundness 敏感,留待后续。
 
@@ -61,6 +61,24 @@
 - **`oob.js` `collectAccesses`**:`arr[idx]` 收集分支从 Identifier-only 改为 `arrK = baseKey(node.object)`,用 `arrK` 作 `arr`/`arrLen`。`extractAccessObligations` 的访问门 `a.arr !== bound.base` 与 z3 共享 `this_tree_length` 变量**自动对齐**,无需改动。
 
 夹具 `examples/itp/member-bound.js`（`pairs()` 仿射 `this.rows.length-1` → `this.rows[Number(i)]`&`this.rows[i+1]` 双证 ✅ / `shiftBad()` 平凡 `this.rows.length` 下 `this.rows[i+1]` **报 possible-OOB + z3 反例** `i=length-1`〔证明 flag 方向对成员基同样成立〕/ `grow()` 体内 `this.rows.push` 变异基 → **跳过**）+ 1 测试（engines **47→48**,#46 直接跑 `extractAccessObligations(member-bound.js)` + `checkContract` 裁决:`this.rows[i]`/仿射 `this.rows[i+1]` 蕴含、平凡界 `this.rows[i+1]` fullyModeled 反例)。**parity 纯向后兼容**:`baseKey(Identifier)` 即原名,故 `loops.js`/`access.js`/`affine.js` 裁决逐位一致、`verify sample-project` 仍 7、既有 ★8 测试全保（**npm test 47→48 全绿**）;本刀只触 `prove` code-mode 抽取器,`verify` 结构未动,故 auth/routes verify 计数按构造不变。**真实库实测**:`prove ../src/store/services/rebac/verification/merkle-tree.js` 现把 `getProof` 的 `for(i<this.tree.length-1)` 循环建模——其 `this.tree[Number(i)]` 访问**证界内**(本刀前因 `this.tree` 成员基被跳过,是验证核心里最后一个 sound 跳过的计数循环访问);`prove ../src/store/services/rebac` **实测共 19 迭代器界循环 + 10 数组访问全证界内、0 误报**（含 `merkle-tree.js:69` 仿射界循环 + `:70` 的 `this.tree[Number(i)]` 本刀新解锁的成员-of-成员访问,以及 `state-root.js`/`hydration.service.js`/`dna-generator.js` 等）(维持"误报 0":义务只对 `a.arr===bound.base` 的数组建、逃逸 prove-only、平凡界过界即真阳)。`src/extract/loop/` 仍 3 文件、`header.js` ≤200 行。**诚实余项**(按杠杆):**CSR `rowOffsets[i+1]` 跨数组 `len==n+1` 关系**(item ①e,需注解/精化层给关系,接 §五·二 合成=最难);之后是完整 IFDS(`docs/14`)。
+
+## 五·三、自建归纳内核（C 档 刀1，2026-06-12，零外部）
+
+**`src/verify/itp/induction.js` `proveByInduction(spec)`** —— C 档第一刀,把放电能力从"可判定 + 带不变式的循环"推进到**无界归纳**(对递归定义函数的 `∀n≥0. P(f(n))`),**全程零外部 prover**。
+
+**为什么 z3 单独不够**:z3 把递归函数 `f` 当**未解释**符号;Presburger 能判定线性 `∀n`,但判不了"`∀n. P(f(n))`"这种依赖 f 递归定义的命题(也判不了非线性项)。归纳是 z3 缺的那一块。
+
+**可信内核 = 一条规则**:`[P(0)] ∧ [∀n≥0. P(n)⇒P(n+1)] ⟹ ∀n≥0. P(n)`(ℕ 上的数学归纳法)。内核**只合成**,绝不自行断言 ∀。
+
+**z3 放电两个可判定义务**(递归函数建模成新鲜整型变量,无需扩 DSL):
+- **base** `P(0)`:`checkContract({pre:[n==0, fn==f0], post:[P]})` —— 在 n=0、f(0)=f0 下证 P。
+- **step** `P(n)⇒P(n+1)`:`checkContract({pre:[n>=0, P(IH), fnNext==step(fn,n)], post:[P(n+1)]})` —— `fn` 取遍 f(n) 所有值、`fnNext` 钉死在递推式上,故 z3 蕴含成立即为对真实递归 f 的归纳步。`proved` 当且仅当 **base ∧ step 都 entailed 且都非 vacuous**(前件 UNSAT 报 `vacuous`,不充假证,同 ★2)。`P(n+1)` 用词界替换 `fn→fn__next`、`n→(n+1)` 从 `property` 机械导出。
+
+**spec 形态**(CLI `prove <spec.json>`,`kind:"induction"`):`{ n, fn, f0, step, property, vars? }`。夹具 `examples/itp/induction.json`:`∀n≥0. sum(n) >= n`(`sum(0)=0, sum(n+1)=sum(n)+(n+1)`)→ **PROVED by induction**(z3 单独证不了,因 sum 递归)。
+
+**soundness / 误证 0**:假定理只能源于 z3(A/B 档已信任)或这几十行(小到可通读)。`test/engines.test.js` **对抗性测试**:① true `sum(n)>=n` → proved;② false-base `sum(n)>n`(n=0 时 0>0 假)→ z3 驳 base、**拒绝**(给反例);③ 非归纳 `sum(n)<=n`(base 成立但 step 破)→ z3 驳 step、**拒绝**——内核**绝不**在缺任一引理时断言 ∀。engines **48→49**(9 smoke 全保)。
+
+**parity 纯增量**:新文件 `induction.js` + CLI `runProveSpecFile` 加 `kind:"induction"` 分支(在 invariant 分支前),不动既有 spec/code 模式(`verify sample-project` 仍 7、loop/OOB/合成裁决逐位一致)。**MCP `prove` 工具暂未接**(避免与 `mcp/tools.js` 上无关未提交 WIP 纠缠)——CLI 已足够演示,MCP 接入留作后续。**余(C 档续刀,可选,仍零外部)**:列表/树结构归纳、强归纳、互递归、终止性度量(`measure`)——同一 LCF 内核加更多可信规则即可。
 
 ## 六、范围与非目标
 - **是**：把已诚实标 `unchecked` 的义务真正放电；可判定档继续走 z3（不退化）；flag-gated、parity。

@@ -78,7 +78,13 @@ async function runProveSpecFile(target) {
   let synth = null
   let allProved = true
   for (const s of specs) {
-    if (s && s.invariant === undefined) {
+    if (s && s.kind === 'induction') {
+      // C-tier: ∀n≥0. P(f(n)) by the self-built ℕ-induction rule (z3 discharges base+step).
+      const ind = await import('./induction.js')
+      const res = await ind.proveByInduction(s)
+      allProved = allProved && res.proved
+      console.log(ind.formatInduction(res))
+    } else if (s && s.invariant === undefined) {
       // No invariant supplied ⇒ synthesize one (LLM proposes, z3 disposes — §五·二).
       // Dynamic import keeps synth.js → prove.js a one-way edge (no static cycle).
       synth = synth || await import('./synth.js')

@@ -1,0 +1,9 @@
+{
+  "kind": "induction",
+  "name": "sum-lower-bound",
+  "n": "n",
+  "fn": "s",
+  "f0": "0",
+  "step": "(s + (n + 1))",
+  "property": "s >= n"
+}

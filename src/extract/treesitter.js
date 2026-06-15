@@ -18,9 +18,18 @@ const GRAMMAR_DIR = (() => {
   try { return path.join(path.dirname(require.resolve('tree-sitter-wasms/package.json')), 'out') } catch { return null }
 })()
 
-// file extension -> grammar stem shipped by tree-sitter-wasms
+// file extension -> grammar stem shipped by tree-sitter-wasms (36 grammars installed).
+// Adding a language = one line here + a SPEC block below (~10 lines of node-type vocabulary).
 export const TS_LANGS = {
   '.py': 'python', '.go': 'go', '.java': 'java', '.rs': 'rust', '.ts': 'typescript', '.tsx': 'tsx', '.jsx': 'tsx',
+  '.cpp': 'cpp', '.cc': 'cpp', '.hpp': 'cpp',
+  '.h': 'c',
+  '.cs': 'csharp',
+  '.rb': 'ruby',
+  '.php': 'php',
+  '.scala': 'scala',
+  '.swift': 'swift',
+  '.kt': 'kotlin',
 }
 
 const CRYPTO = /^(sha256|sha512|md5|hash|hmac|encrypt|decrypt|sign|verify|pbkdf2|scrypt|bcrypt)$/i
@@ -35,6 +44,14 @@ const SPEC = {
   rust: { fn: ['function_item'], lam: ['closure_expression'], cls: ['struct_item', 'enum_item', 'trait_item'], call: ['call_expression', 'macro_invocation'], callField: 'function', imp: ['use_declaration'], loop: ['for_expression', 'while_expression', 'loop_expression'] },
   typescript: { fn: ['function_declaration', 'method_definition'], lam: ['arrow_function', 'function_expression'], cls: ['class_declaration', 'interface_declaration'], call: ['call_expression'], callField: 'function', imp: ['import_statement'], loop: ['for_statement', 'for_in_statement', 'while_statement', 'do_statement'] },
 }
+SPEC.c = { fn: ['function_definition'], lam: [], cls: [], call: ['call_expression'], callField: 'function', imp: ['preproc_include'], loop: ['for_statement', 'while_statement', 'do_statement'] }
+SPEC.cpp = { fn: ['function_definition', 'template_declaration'], lam: ['lambda_expression'], cls: ['class_specifier', 'struct_specifier'], call: ['call_expression', 'template_function'], callField: 'function', imp: ['preproc_include', 'using_declaration'], loop: ['for_statement', 'while_statement', 'do_statement'] }
+SPEC.csharp = { fn: ['method_declaration', 'local_function_statement'], lam: ['lambda_expression', 'anonymous_method_expression'], cls: ['class_declaration', 'interface_declaration', 'struct_declaration'], call: ['invocation_expression'], callField: 'function', imp: ['using_directive'], loop: ['for_statement', 'for_each_statement', 'while_statement', 'do_statement'] }
+SPEC.ruby = { fn: ['method'], lam: [], cls: ['class', 'module'], call: ['call'], callField: 'method', imp: [], loop: ['for', 'while', 'until'] }
+SPEC.php = { fn: ['function_definition', 'method_declaration'], lam: ['arrow_function'], cls: ['class_declaration', 'interface_declaration', 'trait_declaration'], call: ['function_call_expression', 'member_call_expression'], callField: 'function', imp: ['use_declaration', 'namespace_use_clause'], loop: ['for_statement', 'foreach_statement', 'while_statement', 'do_statement'] }
+SPEC.scala = { fn: ['function_definition', 'function_declaration'], lam: ['lambda_expression'], cls: ['class_definition', 'object_definition', 'trait_definition'], call: ['call_expression'], callField: 'function', imp: ['import_declaration'], loop: ['for_expression', 'while_expression'] }
+SPEC.swift = { fn: ['function_declaration'], lam: ['closure_expression'], cls: ['class_declaration', 'struct_declaration', 'protocol_declaration', 'extension_declaration'], call: ['call_expression'], callField: 'function', imp: ['import_declaration'], loop: ['for_statement', 'while_statement', 'repeat_while_statement'] }
+SPEC.kotlin = { fn: ['function_declaration'], lam: ['lambda_literal', 'anonymous_function'], cls: ['class_declaration', 'object_declaration'], call: ['call_expression'], callField: null, imp: ['import_header'], loop: ['for_statement', 'while_statement', 'do_while_statement'] }
 SPEC.tsx = SPEC.typescript
 
 async function getLang(lang) {

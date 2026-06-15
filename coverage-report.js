@@ -22,7 +22,7 @@ const ms = Date.now() - t0
 
 const m = methods || {}
 if (m.program_cache) { console.error('# program cache hit — run after `rm -rf .cache .formal-atlas-cache` for a true coverage breakdown'); }
-const full = (m['acorn-ast'] || 0) + (m['tree-sitter'] || 0) + (m.cache || 0)
+const full = (m['acorn-ast'] || 0) + (m['tree-sitter'] || 0) + (m['vue-sfc'] || 0) + (m.cache || 0)
 const fallback = m['regex-fallback'] || 0
 const generic = m.regex || 0
 

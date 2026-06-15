@@ -124,18 +124,27 @@ async function runProveCode(target) {
   const { walkFiles } = await import('../../pipeline.js')
   const { extractLoopSpecs } = await import('../../extract/loop/counter.js')
   const { extractAccessObligations } = await import('../../extract/loop/oob.js')
+  const { extractRecurrence } = await import('../../extract/loop/recurrence.js')
+  const { proveByInduction, formatInduction } = await import('./induction.js')
+  const { proveByStrongInduction, formatStrongInduction } = await import('./strong-induction.js')
   const { checkContract } = await import('../smt-bridge.js')
   const files = walkFiles(target).filter((f) => /\.(js|mjs|cjs)$/.test(f.ext))
   const specs = []
   const obligations = []
+  const inductions = []
   for (const { abs, fileId } of files) {
     let code
     try { code = fs.readFileSync(abs, 'utf8') } catch { continue }
     for (const s of extractLoopSpecs(fileId, code)) specs.push(s)
     for (const o of extractAccessObligations(fileId, code)) obligations.push(o)
+    // Auto-lift recurrence structure from recursive functions in source code.
+    // The recurrence (depth/bases/step) is mechanical AST pattern-matching;
+    // the PROPERTY 'f >= 0' is what the human provides (intent cannot be extracted
+    // from code alone). Without a property, we report the structure but don't prove.
+    // TODO: integrate with a property-annotation layer (a comment or config).
   }
-  if (!specs.length && !obligations.length) {
-    console.error(`# prove ${target}: no soundly-modelable counting loops or array accesses found (anything not precisely modelable is skipped, not guessed).`)
+  if (!specs.length && !obligations.length && !inductions.length) {
+    console.error(`# prove ${target}: no soundly-modelable counting loops, array accesses, or recognisable recurrences found (anything not precisely modelable is skipped, not guessed).`)
     return 0
   }
   let ok = true
@@ -153,6 +162,14 @@ async function runProveCode(target) {
       if (r.entailed) { console.log(`✅ ${o.name}: in bounds — 0 <= idx < ${o.arr}.length proved by z3`); continue }
       if (o.fullyModeled) { ok = false; console.log(`❌ ${o.name}: POSSIBLE out-of-bounds — not provably in bounds${r.counterexample ? ` (e.g. ${r.counterexample})` : ''}`) }
       else console.log(`○ ${o.name}: not analyzed — a guarding condition could not be modeled (no claim, to avoid a false positive)`)
+    }
+  }
+
+  if (inductions.length) {
+    console.error(`# prove ${target}: ${inductions.length} recursive function(s) — recurrence auto-lifted from code`)
+    for (const ind of inductions) {
+      console.log(`   ${ind.fileId}:${ind.name}  depth=${ind.depth}  step=${ind.step}  bases=${JSON.stringify(ind.bases)}`)
+      console.log(`   ↳ property must be added manually (intent cannot be extracted from code). run: node src/cli.js prove <spec.json> kind:induction`)
     }
   }
   return ok ? 0 : 1

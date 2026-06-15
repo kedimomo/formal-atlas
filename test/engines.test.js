@@ -661,6 +661,23 @@ test('★8 ITP C-tier self-built induction kernel: ∀n.P(f(n)) discharged by z3
   assert.equal(ni.step.ok, false, 'step P(n) ⇒ P(n+1) refuted by z3 — no false ∀ escapes')
 })
 
+test('★8 recurrence auto-extraction from source code: lifts depth/bases/step mechanically', async () => {
+  const { extractRecurrence } = await import('../src/extract/loop/recurrence.js')
+  // fib: depth-2, two self-calls
+  const fib = extractRecurrence('function fib(n) { if (n <= 1) return n; return fib(n-1) + fib(n-2); }', 'fib')
+  assert.ok(fib, 'fib recurrence extracted')
+  assert.equal(fib.depth, 2, 'two self-calls → depth 2')
+  assert.ok(fib.step.includes('fib_1') && fib.step.includes('fib_2'), 'step normalised to fib_1 + fib_2')
+  // sum: depth-1, explicit base
+  const sum = extractRecurrence('function sum(n) { if (n == 0) return 0; return n + sum(n-1); }', 'sum')
+  assert.ok(sum, 'sum recurrence extracted')
+  assert.equal(sum.depth, 1, 'one self-call → depth 1')
+  assert.equal(sum.bases[0], '0', 'explicit base case n==0 → 0')
+  // non-recursive: null
+  const nr = extractRecurrence('function add(a,b) { return a + b; }', 'add')
+  assert.equal(nr, null, 'non-recursive function → null')
+})
+
 test('★8 ITP C-tier strong induction (depth-d recurrence, e.g. Fibonacci): IH at the d used points + d base cases, all z3-discharged; false claim rejected', async () => {
   const { proveByStrongInduction } = await import('../src/verify/itp/strong-induction.js')
   // fib(0)=0, fib(1)=1, fib(n)=fib(n-1)+fib(n-2) — needs P(n-1) AND P(n-2), so weak induction can't.

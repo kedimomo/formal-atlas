@@ -17,7 +17,7 @@ const target = process.argv[2] || '../src'
 const fmt = (n) => Number(n).toLocaleString('en-US')
 
 const t0 = Date.now()
-const { facts, fileCount, methods } = await extractProject(target, { lift: 'offline', maxFiles: 20000 })
+const { facts, fileCount, methods, ignoredExts } = await extractProject(target, { lift: 'offline', maxFiles: 20000 })
 const ms = Date.now() - t0
 
 const m = methods || {}
@@ -54,4 +54,26 @@ console.log(`cyclic (recursion):          ${fmt(e.cyclic.size)}`)
 console.log(`taint source→sink paths:     ${fmt(e.tainted.size)}`)
 console.log(`taint base relations:        source=${fmt(hist.source || 0)} sink=${fmt(hist.sink || 0)} dataflow=${fmt(hist.dataflow || 0)} sanitizer=${fmt(hist.sanitizer || 0)}`)
 console.log(`refinement facts (★2):       ${fmt(hist.refinement || 0)}`)
+
+if (ignoredExts && ignoredExts.size) {
+  const WIRED = new Set(['.js','.mjs','.cjs','.jsx','.ts','.tsx','.vue','.py','.go','.java','.rs','.cpp','.cc','.hpp','.h','.cs','.rb','.php','.scala','.swift','.kt'])
+  const GRAMMAR_STEMS = { '.cpp':'cpp','.cc':'cpp','.hpp':'cpp','.c':'c','.h':'c','.cs':'csharp','.rb':'ruby','.php':'php','.scala':'scala','.swift':'swift','.kt':'kotlin','.sh':'bash','.html':'html','.css':'css','.json':'json','.lua':'lua','.r':'r','.hs':'haskell','.ml':'ocaml','.elm':'elm','.zig':'zig','.dart':'dart','.asm':'asm','.s':'asm','.wat':'wat','.wasm':null,'.prisma':'prisma','.sql':'sql','.proto':'proto','.toml':'toml','.yaml':'yaml','.yml':'yaml','.xml':'xml','.makefile':'make','.dockerfile':'dockerfile','.cmake':'cmake','.gradle':'groovy','.svelte':'svelte','.sol':'solidity','.vy':'vyper','.move':'move','.cairo':'cairo' }
+
+  console.error(`\n⚠ UNSUPPORTED FILE EXTENSIONS (${fmt(ignoredExts.size)} types, ${fmt([...ignoredExts.values()].reduce((a,b)=>a+b,0))} files skipped):`)
+  for (const [ext, count] of [...ignoredExts].sort((a,b)=>b[1]-a[1])) {
+    const stem = GRAMMAR_STEMS[ext.toLowerCase()]
+    let hint = ''
+    if (stem === undefined) {
+      hint = `  → 未识别。检查是否有 tree-sitter grammar 存在。添加方法:在 src/pipeline.js EXTS 中加 "${ext}",在 treesitter.js TS_LANGS + SPEC 中加对应条目`
+    } else if (stem === null) {
+      hint = `  → 二进制/数据格式,跳过是正确的(没有"调用图"可抽)`
+    } else if (WIRED.has(ext.toLowerCase())) {
+      hint = '' // already wired — should not be here (unless uppercase)
+    } else {
+      hint = `  → tree-sitter grammar "tree-sitter-${stem}" 已安装! 在 src/extract/treesitter.js 里加一行:  '${ext}': '${stem}',  然后加 SPEC 块(~10行,参照已有语言)`
+    }
+    console.error(`   ${fmt(count)} file(s): ${ext}  ${hint}`)
+  }
+  console.error('')
+}
 console.log('')

@@ -5,6 +5,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { extractFile } from './extract/index.js'
 import { dedupe, factsToProlog } from './lift/fact-model.js'
@@ -22,13 +23,13 @@ import { generateRefinementsOffline, generateRefinementsOnline } from './formali
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const RULES_DIR = path.join(__dirname, 'rules')
 
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage', '.cache', 'vendor', '__pycache__'])
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage', '.cache', '.formal-atlas-cache', 'vendor', '__pycache__'])
 const EXTS = new Set([
   '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.vue', '.py', '.go', '.rs',
   '.java', '.kt', '.rb', '.php', '.c', '.h', '.cpp', '.cc', '.cs', '.scala', '.swift', '.prisma', '.sql',
 ])
 
-export function walkFiles(root) {
+export function walkFiles(root, ignoredExts = null) {
   const out = []
   const st = fs.statSync(root)
   if (st.isFile()) return [{ abs: root, fileId: path.basename(root), ext: path.extname(root) }]
@@ -41,16 +42,96 @@ export function walkFiles(root) {
       const abs = path.join(dir, e.name)
       if (e.isDirectory()) {
         if (!SKIP_DIRS.has(e.name) && !e.name.startsWith('.')) stack.push(abs)
-      } else if (EXTS.has(path.extname(e.name))) {
-        out.push({ abs, fileId: path.relative(root, abs).replace(/\\/g, '/'), ext: path.extname(e.name) })
+      } else {
+        const ext = path.extname(e.name)
+        if (EXTS.has(ext)) {
+          out.push({ abs, fileId: path.relative(root, abs).replace(/\\/g, '/'), ext })
+        } else if (ignoredExts && ext) {
+          ignoredExts.set(ext, (ignoredExts.get(ext) || 0) + 1)
+        }
       }
     }
   }
   return out
 }
 
+/** How-to-fix hint for an unrecognized file extension. */
+function addLangHint(ext) {
+  const stem = GRAMMAR_STEMS[ext]
+  if (stem) return [stem]
+  // Heuristic: try to guess the tree-sitter grammar name
+  const guess = EXT_TO_GRAMMAR[ext]
+  if (guess && !TS_LANGS[ext]) return [guess]
+  return null
+}
+
+// Grammar-stem lookup for the hint (documented, not used by extraction).
+const GRAMMAR_STEMS = {
+  '.cpp': 'cpp', '.cc': 'cpp', '.hpp': 'cpp', '.c': 'c', '.h': 'c',
+  '.cs': 'csharp', '.rb': 'ruby', '.php': 'php', '.scala': 'scala', '.swift': 'swift', '.kt': 'kotlin',
+  '.sh': 'bash', '.bash': 'bash', '.html': 'html', '.css': 'css', '.json': 'json', '.md': 'markdown',
+  '.lua': 'lua', '.r': 'r', '.hs': 'haskell', '.ml': 'ocaml', '.elm': 'elm', '.zig': 'zig',
+}
+const EXT_TO_GRAMMAR = {
+  '.cpp': 'cpp', '.cc': 'cpp', '.c': 'c', '.h': 'c', '.cs': 'csharp',
+  '.rb': 'ruby', '.php': 'php', '.scala': 'scala', '.swift': 'swift', '.kt': 'kotlin',
+}
+
+// ---- 程序级缓存（仿 fdrs-mcp 的 ensureDir + fs 直接读写）----
+
+function programCacheDir() {
+  // Use same CACHE_ROOT logic as src/cache.js
+  const MODE = process.env.FORMAL_ATLAS_MODE || 'standalone'
+  const root = MODE === 'mcp'
+    ? path.join(process.env.FORMAL_ATLAS_PROJECT_ROOT || process.cwd(), '.formal-atlas-cache')
+    : path.join(__dirname, '..', '.cache')
+  const d = path.join(root, 'programs')
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true })
+  return d
+}
+
+function computeStatManifest(files, opts) {
+  // Lightweight manifest from file mtimes + sizes (no content read).
+  // Serves as a sentinel: if unchanged, content-based extract caches are all valid.
+  const parts = files.map(f => {
+    try {
+      const s = fs.statSync(f.abs)
+      return `${f.fileId}:${s.mtimeMs}:${s.size}`
+    } catch { return `${f.fileId}:0:0` }
+  }).sort()
+  parts.push(`eg=${opts.engine},pt=${opts.pointsToEnabled ? 1 : 0},fw=${opts.frameworkEnabled ? 1 : 0}`)
+  return crypto.createHash('sha256').update(parts.join('\n')).digest('hex')
+}
+
+// Clean old manifests; keep the last N
+function cleanOldPrograms(keep = 3) {
+  try {
+    const dir = programCacheDir()
+    const files = fs.readdirSync(dir).filter(f => f.endsWith('.json')).map(f => ({
+      name: f, mtime: fs.statSync(path.join(dir, f)).mtimeMs,
+    })).sort((a, b) => b.mtime - a.mtime)
+    for (const f of files.slice(keep)) {
+      try { fs.unlinkSync(path.join(dir, f.name)) } catch { /* skip */ }
+    }
+  } catch { /* dir may not exist yet */ }
+}
+
 export async function extractProject(root, { lift = 'offline', formalize = 'off', maxFiles = 5000, engine = 'prolog', pointsToEnabled = false, frameworkEnabled = false } = {}) {
-  const files = walkFiles(root).slice(0, maxFiles)
+  const ignoredExts = new Map()
+  const files = walkFiles(root, ignoredExts).slice(0, maxFiles)
+
+  // --- 程序级缓存检查（仿 fdrs-mcp: fs.existsSync → fs.readFileSync → JSON.parse）---
+  const statManifest = computeStatManifest(files, { engine, pointsToEnabled, frameworkEnabled })
+  const progPath = path.join(programCacheDir(), `${statManifest}.json`)
+  if (fs.existsSync(progPath)) {
+    try {
+      const cached = JSON.parse(fs.readFileSync(progPath, 'utf8'))
+      if (cached.v === 1 && Array.isArray(cached.facts)) {
+        return { facts: cached.facts, rawLines: cached.rawLines || [], fileCount: cached.fileCount, methods: { program_cache: 1 }, ignoredExts: new Map() }
+      }
+    } catch { /* 损坏 → 重建 */ }
+  }
+
   let facts = []
   const rawLines = []
   const methods = {}
@@ -117,7 +198,14 @@ export async function extractProject(root, { lift = 'offline', formalize = 'off'
   // so tau-prolog's recursive rules short-circuit and violation/2 reads the facts.
   // Opt-in (engine='datalog'); default 'prolog' leaves the fact base untouched.
   if (engine === 'datalog') facts.push(...materialize(facts))
-  return { facts, rawLines, fileCount: files.length, methods }
+
+  // --- 保存程序缓存（仿 fdrs-mcp: ensureDir → fs.writeFileSync）---
+  try {
+    fs.writeFileSync(progPath, JSON.stringify({ v: 1, facts, rawLines, fileCount: files.length }))
+    cleanOldPrograms(3)
+  } catch { /* 写盘失败不阻塞 */ }
+
+  return { facts, rawLines, fileCount: files.length, methods, ignoredExts }
 }
 
 export function loadRules(rulesDir = RULES_DIR) {

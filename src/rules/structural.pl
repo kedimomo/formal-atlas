@@ -42,6 +42,16 @@
 :- dynamic(postcondition/2).
 :- dynamic(invariant/2).
 
+% Document-fact schema (markdown extractor — doc-consistency.pl):
+:- dynamic(heading/4).
+:- dynamic(link/4).
+:- dynamic(code_block/3).
+:- dynamic(code_defines/4).
+:- dynamic(todo/4).
+:- dynamic(frontmatter/3).
+:- dynamic(doc_ref/3).
+:- dynamic(bullet/3).
+
 % Local member/2 (avoid depending on library(lists) being loaded).
 % Shared by resolved.pl's cycle-safe reachability.
 member(X, [X|_]).

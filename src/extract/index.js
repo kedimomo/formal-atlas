@@ -9,13 +9,17 @@ import { extractGeneric, langOf } from './generic.js'
 import { extractTreeSitter, TS_LANGS } from './treesitter.js'
 import { extractTaintJs } from './taint.js'
 import { extractVue } from './vue-sfc.js'
+import { extractMarkdown } from './markdown.js'
 
 const JS_EXT = new Set(['.js', '.mjs', '.cjs'])
 const TAINT_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx'])
 
 export async function extractFile(fileId, code, ext) {
   let result
-  if (ext === '.vue') {
+  if (ext === '.md') {
+    const v = extractMarkdown(fileId, code)
+    result = v ? v : { facts: extractGeneric(fileId, code, 'markdown'), method: 'regex-fallback' }
+  } else if (ext === '.vue') {
     const v = await extractVue(fileId, code)
     result = v ? v : { facts: extractGeneric(fileId, code, 'vue'), method: 'regex-fallback' }
   } else if (JS_EXT.has(ext)) {

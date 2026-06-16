@@ -661,6 +661,22 @@ test('★8 ITP C-tier self-built induction kernel: ∀n.P(f(n)) discharged by z3
   assert.equal(ni.step.ok, false, 'step P(n) ⇒ P(n+1) refuted by z3 — no false ∀ escapes')
 })
 
+test('Phase 2: markdown extractor lifts documentation into facts', async () => {
+  const { extractMarkdown } = await import('../src/extract/markdown.js')
+  const code = fs.readFileSync(root('examples/markdown/doc.md'), 'utf8')
+  const r = extractMarkdown('doc.md', code)
+  assert.equal(r.method, 'markdown-regex')
+  assert.ok(r.facts.length >= 20, 'rich doc should produce 20+ facts')
+  assert.ok(r.facts.some(f => f.pred === 'heading' && f.args.length >= 4), 'headings extracted')
+  assert.ok(r.facts.some(f => f.pred === 'link' && f.args[1] === 'src/pipeline.js'), 'inline link [text](url) extracted')
+  assert.ok(r.facts.some(f => f.pred === 'code_block' && f.args[1] === 'js'), 'fenced ```js block extracted')
+  assert.ok(r.facts.some(f => f.pred === 'code_defines'), 'JS function defined inside doc code block → code_defines')
+  assert.ok(r.facts.some(f => f.pred === 'todo' && f.args[1] === 'TODO'), 'TODO marker extracted')
+  assert.ok(r.facts.some(f => f.pred === 'frontmatter' && f.args[1] === 'title'), 'YAML frontmatter extracted')
+  assert.ok(r.facts.some(f => f.pred === 'doc_ref' && f.args[1] === '技术路线图'), '[[wiki-link]] extracted')
+  assert.ok(r.facts.some(f => f.pred === 'link' && f.args[1] === 'https://github.com/kedimomo/formal-atlas'), 'auto-link <url> extracted')
+})
+
 test('★8 recurrence auto-extraction from source code: lifts depth/bases/step mechanically', async () => {
   const { extractRecurrence } = await import('../src/extract/loop/recurrence.js')
   // fib: depth-2, two self-calls

@@ -26,7 +26,7 @@ export const RULES_DIR = path.join(__dirname, 'rules')
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage', '.cache', '.formal-atlas-cache', 'vendor', '__pycache__'])
 const EXTS = new Set([
   '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.vue', '.py', '.go', '.rs',
-  '.java', '.kt', '.rb', '.php', '.c', '.h', '.cpp', '.cc', '.cs', '.scala', '.swift', '.prisma', '.sql',
+  '.java', '.kt', '.rb', '.php', '.c', '.h', '.cpp', '.cc', '.cs', '.scala', '.swift', '.prisma', '.sql', '.md',
 ])
 
 export function walkFiles(root, ignoredExts = null) {

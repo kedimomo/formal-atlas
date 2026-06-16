@@ -15,6 +15,7 @@
  * facts are conservative (name-level only; no expression analysis) and purely additive.
  */
 import { extractJs } from './js-ast.js'
+import { extractTreeSitter, TS_LANGS } from './treesitter.js'
 
 const SCRIPT_RE = /<script\b[^>]*>/gi
 const SCRIPT_END = /<\/script>/gi
@@ -36,11 +37,12 @@ function blockContent(code, startRe, endRe) {
   return { content: code.slice(from, em.index), offset: from }
 }
 
-/** Parse a <script> block into its setup/plain kind. */
+/** Parse a <script> tag: extract { kind: 'setup'|'script', lang: 'ts'|'tsx'|null }. */
 function scriptKind(tag) {
-  // <script setup> or <script setup lang="ts"> → setup
-  // <script> or <script lang="ts">          → plain
-  return /\bsetup\b/.test(tag) ? 'setup' : 'script'
+  const setup = /\bsetup\b/.test(tag)
+  const langM = tag.match(/\blang\s*=\s*["']([^"']+)["']/)
+  const lang = langM ? langM[1].toLowerCase() : null
+  return { kind: setup ? 'setup' : 'script', lang: lang === 'ts' || lang === 'tsx' ? lang : null }
 }
 
 /**
@@ -76,7 +78,7 @@ function extractTemplate(code, fileId) {
  * Extract a .vue SFC into structural facts.
  * Returns { facts, method: 'vue-sfc' } on success, or null on parse failure.
  */
-export function extractVue(fileId, code) {
+export async function extractVue(fileId, code) {
   const scriptBlocks = []
   const tagLocs = []
   // Find ALL <script ...> blocks (setup + plain)
@@ -100,20 +102,29 @@ export function extractVue(fileId, code) {
 
   for (let i = 0; i < scriptBlocks.length; i++) {
     const { tag, content } = scriptBlocks[i]
-    const kind = scriptKind(tag)
+    const { kind, lang } = scriptKind(tag)
     const blockId = scriptBlocks.length === 1 ? fileId : `${fileId}::${kind}`
-    // Treat the script content as JavaScript and extract full AST facts through the
-    // same js-ast.js pipeline (acorn parse → alloc / isFunction / calls3 / params /
-    // imports / intents / taint). The blockId keeps names scoped per-block.
+    // For <script lang="ts"> / <script setup lang="ts">, acorn cannot parse
+    // TypeScript syntax — route through the tree-sitter typescript grammar instead,
+    // which is already installed and verified. Same for tsx.
+    // <script> (no lang) and <script lang="js"> stay on the acorn path.
     let ok = false
-    try {
-      const facts = extractJs(blockId, content)
-      if (facts) {
-        allFacts.push(...facts)
-        ok = true
-        anyBlockOk = true
-      }
-    } catch { /* acorn parse failed on this block — skip it */ }
+    if (lang === 'ts' || lang === 'tsx') {
+      try {
+        const ext = lang === 'ts' ? '.ts' : '.tsx'
+        const facts = await extractTreeSitter(blockId, content, TS_LANGS[ext])
+        if (facts) { allFacts.push(...facts); ok = true; anyBlockOk = true }
+      } catch { /* tree-sitter parse failed — leave ok=false */ }
+    } else {
+      try {
+        const facts = extractJs(blockId, content)
+        if (facts) {
+          allFacts.push(...facts)
+          ok = true
+          anyBlockOk = true
+        }
+      } catch { /* acorn parse failed on this block — skip it */ }
+    }
     // If extractJs did not return (e.g. empty content), try regex as a fallback
     // for THIS block only — but better to just skip empty bodies.
     if (!ok && content.trim().length < 256) {

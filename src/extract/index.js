@@ -16,7 +16,7 @@ const TAINT_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx'])
 export async function extractFile(fileId, code, ext) {
   let result
   if (ext === '.vue') {
-    const v = extractVue(fileId, code)
+    const v = await extractVue(fileId, code)
     result = v ? v : { facts: extractGeneric(fileId, code, 'vue'), method: 'regex-fallback' }
   } else if (JS_EXT.has(ext)) {
     const f = extractJs(fileId, code)

@@ -24,7 +24,7 @@ export const TS_LANGS = {
   '.py': 'python', '.go': 'go', '.java': 'java', '.rs': 'rust', '.ts': 'typescript', '.tsx': 'tsx', '.jsx': 'tsx',
   '.cpp': 'cpp', '.cc': 'cpp', '.hpp': 'cpp',
   '.h': 'c',
-  '.cs': 'csharp',
+  '.cs': 'c_sharp',
   '.rb': 'ruby',
   '.php': 'php',
   '.scala': 'scala',
@@ -46,7 +46,7 @@ const SPEC = {
 }
 SPEC.c = { fn: ['function_definition'], lam: [], cls: [], call: ['call_expression'], callField: 'function', imp: ['preproc_include'], loop: ['for_statement', 'while_statement', 'do_statement'] }
 SPEC.cpp = { fn: ['function_definition', 'template_declaration'], lam: ['lambda_expression'], cls: ['class_specifier', 'struct_specifier'], call: ['call_expression', 'template_function'], callField: 'function', imp: ['preproc_include', 'using_declaration'], loop: ['for_statement', 'while_statement', 'do_statement'] }
-SPEC.csharp = { fn: ['method_declaration', 'local_function_statement'], lam: ['lambda_expression', 'anonymous_method_expression'], cls: ['class_declaration', 'interface_declaration', 'struct_declaration'], call: ['invocation_expression'], callField: 'function', imp: ['using_directive'], loop: ['for_statement', 'for_each_statement', 'while_statement', 'do_statement'] }
+SPEC.c_sharp = { fn: ['method_declaration', 'local_function_statement'], lam: ['lambda_expression', 'anonymous_method_expression'], cls: ['class_declaration', 'interface_declaration', 'struct_declaration'], call: ['invocation_expression'], callField: 'function', imp: ['using_directive'], loop: ['for_statement', 'for_each_statement', 'while_statement', 'do_statement'] }
 SPEC.ruby = { fn: ['method'], lam: [], cls: ['class', 'module'], call: ['call'], callField: 'method', imp: [], loop: ['for', 'while', 'until'] }
 SPEC.php = { fn: ['function_definition', 'method_declaration'], lam: ['arrow_function'], cls: ['class_declaration', 'interface_declaration', 'trait_declaration'], call: ['function_call_expression', 'member_call_expression'], callField: 'function', imp: ['use_declaration', 'namespace_use_clause'], loop: ['for_statement', 'foreach_statement', 'while_statement', 'do_statement'] }
 SPEC.scala = { fn: ['function_definition', 'function_declaration'], lam: ['lambda_expression'], cls: ['class_definition', 'object_definition', 'trait_definition'], call: ['call_expression'], callField: 'function', imp: ['import_declaration'], loop: ['for_expression', 'while_expression'] }

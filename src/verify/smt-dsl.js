@@ -27,6 +27,17 @@ export function parseExpr(src) {
     if (x === '!' || x === '-') return { t: 'un', op: x, e: prefix() }
     if (x === 'true' || x === 'false') return { t: 'bool', v: x === 'true' }
     if (/^[0-9]+$/.test(x)) return { t: 'num', v: Number(x) }
+    // Function call: f(args...) where the identifier is followed by '('
+    if (/^[A-Za-z_]\w*$/.test(x) && peek() === '(') {
+      const args = []
+      next() // skip '('
+      while (peek() !== ')') {
+        args.push(expr(0))
+        if (peek() === ',') next()
+      }
+      next() // skip ')'
+      return { t: 'call', fn: x, args }
+    }
     return { t: 'var', v: x }
   }
 
@@ -72,7 +83,7 @@ export function varsOf(src) {
   return [...set]
 }
 
-export function compile(ast, Z3, vars) {
+export function compile(ast, Z3, vars, ufs = {}) {
   switch (ast.t) {
     case 'num': return Z3.Int.val(ast.v)
     case 'bool': return Z3.Bool.val(ast.v)
@@ -81,11 +92,16 @@ export function compile(ast, Z3, vars) {
       if (!z) throw new Error(`unknown variable: ${ast.v}`)
       return z
     }
+    case 'call': {
+      const fd = ufs[ast.fn]
+      if (!fd) throw new Error(`unknown UF: ${ast.fn}`)
+      return fd(...ast.args.map((a) => compile(a, Z3, vars, ufs)))
+    }
     case 'un': {
-      const e = compile(ast.e, Z3, vars)
+      const e = compile(ast.e, Z3, vars, ufs)
       return ast.op === '!' ? Z3.Not(e) : e.neg()
     }
-    case 'bin': return bin(ast.op, compile(ast.l, Z3, vars), compile(ast.r, Z3, vars), Z3)
+    case 'bin': return bin(ast.op, compile(ast.l, Z3, vars, ufs), compile(ast.r, Z3, vars, ufs), Z3)
     default: throw new Error('bad ast')
   }
 }

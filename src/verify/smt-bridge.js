@@ -21,6 +21,28 @@ async function z3() {
 const orAll = (Z3, a) => (a.length ? a.reduce((x, y) => Z3.Or(x, y)) : Z3.Bool.val(false))
 const andAll = (Z3, a) => (a.length ? a.reduce((x, y) => Z3.And(x, y)) : Z3.Bool.val(true))
 
+/** Fresh-variable encoding for UF application f(x). z3-solver (WASM) currently does
+ *  not expose Z3_mk_func_decl (Function.declare gives Context mismatch), so we model
+ *  f_k as fresh Int/bool constants — exactly the same recurrence-as-constraint trick
+ *  the induction/termination kernels already use. When z3-solver adds UF support the
+ *  one-line fix here creates real FuncDecl objects instead. */
+function createUFs(Z3, ufDefs) {
+  const ufs = {}
+  if (!ufDefs) return ufs
+  for (const [name, def] of Object.entries(ufDefs)) {
+    const S = (t) => t === 'Bool' ? Z3.Bool : Z3.Int
+    const ret = S(def.sort || 'Int')
+    // Return a callable that creates fresh Z3 constants named f_0, f_1, ... for each
+    // argument tuple. The caller must constrain these via user-provided preconditions.
+    const callable = (...args) => {
+      const key = args.map(a => a?.toString ? a.toString() : String(a)).join('_')
+      return Z3.Int.const(`${name}__${key}`)
+    }
+    ufs[name] = callable
+  }
+  return ufs
+}
+
 /**
  * Hoare-style contract check: is the postcondition GUARANTEED by the
  * preconditions? Checks (a) preconditions satisfiable (not vacuous) and
@@ -31,8 +53,11 @@ export async function checkContract(spec) {
   const Z3 = await z3()
   const vars = {}
   for (const [n, ty] of Object.entries(spec.vars || {})) vars[n] = ty === 'bool' ? Z3.Bool.const(n) : Z3.Int.const(n)
-  const pre = (spec.pre || []).map((s) => compile(parseExpr(s), Z3, vars))
-  const post = (spec.post || []).map((s) => compile(parseExpr(s), Z3, vars))
+  // UF declarations: { name: { sort: 'Int'|'Bool', args: ['Int',...] } }
+  const ufs = createUFs(Z3, spec.ufs)
+  const C = (s) => compile(parseExpr(s), Z3, vars, ufs)
+  const pre = (spec.pre || []).map(C)
+  const post = (spec.post || []).map(C)
 
   const s1 = new Z3.Solver()
   pre.forEach((c) => s1.add(c))
@@ -64,7 +89,8 @@ export async function checkInductive(spec) {
     base[n] = ty === 'bool' ? Z3.Bool.const(n) : Z3.Int.const(n)
     next[n] = ty === 'bool' ? Z3.Bool.const(`${n}'`) : Z3.Int.const(`${n}'`)
   }
-  const C = (s, vmap) => compile(parseExpr(s), Z3, vmap)
+  const ufs = createUFs(Z3, spec.ufs)
+  const C = (s, vmap) => compile(parseExpr(s), Z3, vmap, ufs)
   const assigned = new Set((spec.body || []).map((a) => a.var))
   const trans = (spec.body || []).map((a) => next[a.var].eq(C(a.expr, base)))
     .concat(Object.keys(spec.vars || {}).filter((v) => !assigned.has(v)).map((v) => next[v].eq(base[v]))) // frame: unassigned vars unchanged
